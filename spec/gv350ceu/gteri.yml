@@ -32,8 +32,8 @@ schema:
         - { name: eri_mask, type: hex, length: 8 }
         - { name: external_power_mv, type: int, min: 0, max: 32000, optional: true }
         - { name: report_type, type: string, length: 2, pattern: "^[0-9A-Fa-f]{2}$" }
-        - { name: number, type: int, min: 1, max: 15}
-        - { name: gnss_accuracy, type: int, min: 0, max: 500}
+        - { name: number, type: int, min: 1, max: 15 }
+        - { name: gnss_accuracy, type: int, min: 0, max: 500 }
         - { name: speed_kmh, type: float, min: 0.0, max: 999.9 }
         - { name: azimuth_deg, type: int, min: 0, max: 359 }
         - { name: altitude_m, type: float, min: -1000.0, max: 30000.0, optional: true }
@@ -109,10 +109,6 @@ schema:
         - { name: device_status, type: hex, length_variant: [6, 10], optional: true, allow_empty: true }
         - { name: uart_device_type, type: int, min: 0, max: 7, optional: true, allow_empty: true }
 
-        # ---- Campos opcionales de revisiones recientes (si los soporta firmware/integración) ----
-        - { name: rpm, type: int, min: 0, max: 20000, optional: true }
-        - { name: total_revolutions_counter, type: int, min: 0, max: 4294967295, optional: true }
-        - { name: angle_sensor_mode, type: int, min: 0, max: 3, optional: true }
 
         # ===========================
         # BLOQUES OPCIONALES AVANZADOS
@@ -131,10 +127,10 @@ schema:
           optional: true
           fields:
             - { name: dfs_index, type: int, min: 0, max: 255 }
-            - { name: dfs_type, type: int, min: 0, max: 255, optional: true }          # tipo/modelo de sensor
-            - { name: dfs_level_pct, type: float, min: 0, max: 100, optional: true }   # % combustible
-            - { name: dfs_temp_c, type: float, optional: true }                        # temperatura (si aplica)
-            - { name: dfs_raw_hex, type: hex, max_length: 64, optional: true }         # payload crudo por compatibilidad
+            - { name: dfs_type, type: int, min: 0, max: 255, optional: true }
+            - { name: dfs_level_pct, type: float, min: 0, max: 100, optional: true }
+            - { name: dfs_temp_c, type: float, optional: true }
+            - { name: dfs_raw_hex, type: hex, max_length: 64, optional: true }
 
         # ---- 1-Wire Data (iButton / Temp DS18B20) ----
         - name: one_wire_count
@@ -148,10 +144,10 @@ schema:
           repeat: one_wire_count
           optional: true
           fields:
-            - { name: ow_type, type: int, min: 0, max: 255 }                           # 0=unknown,1=iButton,2=Temp...
-            - { name: ow_address_hex, type: hex, length_variant: [16], optional: true }# 64-bit ROM
-            - { name: ow_temp_c, type: float, optional: true }                         # DS18B20
-            - { name: ow_ibutton_id, type: hex, length_variant: [16], optional: true } # iButton ID
+            - { name: ow_type, type: int, min: 0, max: 255 }
+            - { name: ow_address_hex, type: hex, length_variant: [16], optional: true }
+            - { name: ow_temp_c, type: float, optional: true }
+            - { name: ow_ibutton_id, type: hex, length_variant: [16], optional: true }
             - { name: ow_raw_hex, type: hex, max_length: 64, optional: true }
 
         # ---- CAN Data (FMS/J1939/OBD-II vía adaptador externo) ----
@@ -214,7 +210,7 @@ schema:
           fields:
             - { name: fs_index, type: int, min: 0, max: 255 }
             - { name: fs_voltage_mv, type: int, min: 0, max: 32000, optional: true }
-            - { name: fs_level_pct, type: float, min: 0, max: 100, optional: true }    # si el equipo aplica curva de calibración
+            - { name: fs_level_pct, type: float, min: 0, max: 100, optional: true }
             - { name: fs_temp_c, type: float, optional: true }
             - { name: fs_raw_hex, type: hex, max_length: 64, optional: true }
 
@@ -230,9 +226,9 @@ schema:
           repeat: rf433_count
           optional: true
           fields:
-            - { name: rf433_type, type: int, min: 0, max: 255 }                         # tipo/modelo accesorio
+            - { name: rf433_type, type: int, min: 0, max: 255 }
             - { name: rf433_id_hex, type: hex, length_variant: [4, 8, 12], optional: true }
-            - { name: rf433_event, type: int, min: 0, max: 255, optional: true }        # p.ej. botón/estado
+            - { name: rf433_event, type: int, min: 0, max: 255, optional: true }
             - { name: rf433_rssi_dbm, type: int, min: -120, max: 0, optional: true }
             - { name: rf433_raw_hex, type: hex, max_length: 64, optional: true }
 
@@ -260,4 +256,83 @@ schema:
 
             - name: ble_name
               type: string
-             
+              max_length: 32
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 0 }
+
+            - name: ble_mac
+              type: hex
+              length: 12
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 1 }
+
+            - name: ble_status
+              type: int
+              min: 0
+              max: 3
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 2 }
+
+            - name: ble_batt_mv
+              type: int
+              min: 0
+              max: 5000
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 3 }
+
+            - name: ble_temp_c
+              type: float
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 4 }
+
+            - name: ble_humidity_pct
+              type: float
+              min: 0
+              max: 100
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 5 }
+
+            - name: ble_magnet_id
+              type: int
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 12 }
+
+            - name: ble_mag_event_counter
+              type: int
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 12 }
+
+            - name: ble_magnet_state
+              type: int
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 12 }
+
+        # ---- RAT/Banda (habilita bit 13 en eri_mask) ----
+        - name: rat
+          type: int
+          min: 0
+          max: 255
+          optional: true
+          enabled_if_any:
+            - { mask_field: eri_mask, bit: 13 }
+
+        - name: band
+          type: string
+          max_length: 8
+          optional: true
+          present_if: { field_present: rat }
+
+    # =========================
+    # COLA (Siempre viene)
+    # =========================
+    - name: tail
+      fields:
+        - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS" }
+        - { name: count_hex, type: hex, length: 4 }
+
+validation:
+  rules:
+    - { name: header_and_message, assert: "(header in ['+RESP:GT', '+BUFF:GT']) and message == 'ERI'" }
+    - { name: terminator, assert: "line.endswith('$')" }
+    - { name: lat_lon_range, assert: "(-90.0 <= lat <= 90.0) and (-180.0 <= lon <= 180.0)" }
+    - { name: speed_azimuth_consistency, level: warn, assert: "not (speed_kmh == 0 and azimuth_deg not in [0, 360])" }
