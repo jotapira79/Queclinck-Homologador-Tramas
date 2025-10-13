@@ -5,7 +5,6 @@ encoding: "ASCII"
 delimiter: ","
 terminator: "$"
 
-# El campo versión es fijo y de 10 hex (ej.: 8020040900)
 version_field: { name: full_protocol_version, length: 10, format: hex }
 
 schema:
@@ -24,12 +23,12 @@ schema:
 
     # -----------------------------
     # CUERPO - PARTE FIJA (NO VARÍA EL CONTEO)
-    # Estos campos SIEMPRE están presentes (aunque algunos puedan venir en cero).
     # -----------------------------
     - name: body_fixed
       fields:
         # --- ERI core (fijo) ---
-        - { name: eri_mask, type: hex, length: 8, description: "Bitmask que habilita bloques opcionales (p.ej. BLE)" }
+        - { name: eri_mask, type: hex, length: 8, description: "Bitmask que habilita bloques opcionales (p.ej. BLE, CAN)" }
+        - { name: ext_power_mv, type: int, min: 0, max: 32000, nullable: true, description: "Puede venir vacío; conserva columna" }
         - { name: report_type, type: string, length: 2, pattern: "^[0-5][0-6]$", description: "Categoría/subtipo numéricos" }
         - { name: number, type: int, min: 1, max: 15 }
         - { name: gnss_acc_factor, type: int, min: 0, max: 50, description: "Factor de precisión GNSS (entero)" }
@@ -48,23 +47,23 @@ schema:
         - { name: lac, type: hex, length: 4 }
         - { name: cell_id, type: hex, length_variant: [4,8] }
 
-        # --- Position Append Mask (fijo, pero controla bloque variable) ---
+        # --- Position Append Mask (fijo; controla bloque variable) ---
         - { name: pos_append_mask, type: hex, length: 2, description: "bit0=satellites, bit1=H-Acc, bit2=V-Acc, bit3=3D-Acc; algunos firmwares incluyen GNSS trigger" }
 
-        # --- Contadores / estado vehículo (fijos en layout; pueden venir en 0 o vacío pero ocupan su lugar) ---
+        # --- Contadores / estado vehículo (fijo) ---
         - { name: mileage_km, type: float, min: 0.0, max: 4294967.0, precision: 1 }
         - { name: hour_meter, type: string, pattern: "^[0-9]{1,7}:[0-5][0-9]:[0-5][0-9]$", description: "D:HH:MM" }
         - { name: backup_batt_pct, type: int, min: 0, max: 100 }
         - { name: device_status, type: hex, length: 6 }
 
         # --- Reservados (fijos en posición; pueden venir vacíos) ---
-        - { name: reserved_1, type: string }
-        - { name: reserved_2, type: string }
+        - { name: reserved_1, type: string, nullable: true }
+        - { name: reserved_2, type: string, nullable: true }
+        - { name: reserved_3, type: string, nullable: true }
+        - { name: reserved_4, type: string, nullable: true }
 
     # -----------------------------
     # CUERPO - BLOQUES OPCIONALES (VARÍAN EL CONTEO)
-    # Todo lo de aquí abajo SOLO aparece si la máscara/condición lo habilita.
-    # Al no aparecer, se reducen columnas/campos en el mensaje.
     # -----------------------------
     - name: body_variable
       fields:
@@ -76,7 +75,6 @@ schema:
           max: 72
           present_if: { mask_field: pos_append_mask, bit: 0 }
 
-        # Precisiones GNSS: usamos nombres "hdop/vdop/pdop" como alias:
         - name: hdop
           type: float
           min: 0.00
@@ -98,15 +96,22 @@ schema:
           precision: 2
           present_if: { mask_field: pos_append_mask, bit: 3 }
 
-        # GNSS trigger type (algunos firmwares lo adjuntan junto a las precisiones)
         - name: gnss_trigger_type
           type: int
           min: 0
           max: 4
           present_if_any:
-            - { mask_field: pos_append_mask, bit: 1 }   # cuando se reporta precisión H
-            - { mask_field: pos_append_mask, bit: 2 }   # o V
-            - { mask_field: pos_append_mask, bit: 3 }   # o 3D
+            - { mask_field: pos_append_mask, bit: 1 }
+            - { mask_field: pos_append_mask, bit: 2 }
+            - { mask_field: pos_append_mask, bit: 3 }
+
+        # --- CAN Data (habilitado por ERI Mask bit 2) ---
+        - name: can_data
+          type: string
+          max_length: 1024
+          enabled_if_any:
+            - { mask_field: eri_mask, bit: 2 }
+          description: "Payload CAN crudo/codificado; al aparecer incrementa columnas"
 
         # --- Bloque de accesorios BLE (habilitado por ERI Mask bit 8) ---
         - name: ble_count
@@ -128,7 +133,6 @@ schema:
             - { name: ble_raw_data, type: string, optional: true }
             - { name: ble_append_mask, type: hex, length: 2, optional: true }
 
-            # Subcampos controlados por ble_append_mask
             - name: ble_name
               type: string
               max_length: 32
@@ -240,9 +244,6 @@ schema:
               enum: [0,1]
               present_if: { mask_field: ble_append_mask, bit: 14 }
 
-        # Reservado adicional (si ciertos firmwares agregan un campo extra suelto)
-        - { name: reserved_3, type: string, optional: true }
-
     # -----------------------------
     # COLA (FIJA)
     # -----------------------------
@@ -257,12 +258,14 @@ validation:
     - { name: terminator,        assert: "line.endswith('$')" }
   notes:
     - "pos_append_mask (2 hex): bit0=satellites, bit1=Horizontal Accuracy (alias hdop), bit2=Vertical Accuracy (alias vdop), bit3=3D Accuracy (alias pdop)."
-    - "eri_mask (8 hex): incluye el bit 8 para habilitar el bloque de accesorios BLE."
+    - "eri_mask (8 hex): bit2 habilita CAN Data; bit8 habilita bloque de accesorios BLE."
     - "cell_id puede llegar en 16 o 32 bits (length_variant [4,8])."
-    - "Al faltar bloques opcionales (pos_append_mask sin bits, BLE deshabilitado), la cantidad total de campos DISMINUYE."
+    - "Al faltar bloques opcionales (pos_append_mask sin bits, BLE/CAN deshabilitados), la cantidad total de campos DISMINUYE."
 
 examples:
-  - raw: "+RESP:GTERI,8020040900,866314060268081,GV58LAU,00000100,10,1,2,14.2,71,35.6,117.243103,31.854079,20250320015848,0460,0000,550B,0E9E30A5,0009,9,2.01,1.47,2.49,0.0,1234:56:07,,85,220100,,2,00,1,0,00000001,001F,TD_100109,FD6D3DE6D704,1,3600,18,01,1,3,0000006D,011F,DU_100361,F022A2143F36,1,3500,0,9,0,20250320015850,00D0$"
-    parsed_keys_must_include: [imei, device_name, eri_mask, lon, lat, gnss_utc, pos_append_mask, satellites, hdop, vdop, pdop, send_time, count_hex]
-  - raw: "+BUFF:GTERI,8020040900,866314060965330,GV58LAU,00000008,21,3,1,0.0,0,0.0,0.000000,0.000000,20250930110413,0736,0001,1234,0000,0001,8,1.50,,,100,220100,,0,20250930110413,ED27$"
-    parsed_keys_must_include: [imei, device_name, eri_mask, pos_append_mask, hdop, mileage_km, send_time, count_hex]
+  # Nótese el doble separador ',,' tras eri_mask para indicar ext_power_mv vacío.
+  - raw: "+RESP:GTERI,8020040900,866314060268081,GV58LAU,00000100,,10,1,2,14.2,71,35.6,117.243103,31.854079,20250320015848,0460,0000,550B,0E9E30A5,0009,9,2.01,1.47,2.49,0.0,1234:56:07,,85,220100,,,,,20250320015850,00D0$"
+    parsed_keys_must_include: [imei, device_name, eri_mask, ext_power_mv, lon, lat, gnss_utc, pos_append_mask, satellites, hdop, vdop, pdop, send_time, count_hex]
+
+  - raw: "+BUFF:GTERI,8020040900,866314060965330,GV58LAU,00000008,,21,3,1,0.0,0,0.0,0.000000,0.000000,20250930110413,0736,0001,1234,0000,0001,8,1.50,,,100,220100,,,,,20250930110413,ED27$"
+    parsed_keys_must_include: [imei, device_name, eri_mask, ext_power_mv, pos_append_mask, hdop, mileage_km, send_time, count_hex]
