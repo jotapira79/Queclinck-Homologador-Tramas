@@ -31,8 +31,10 @@ class Condition:
     bit: Optional[int] = None
     field_present: Optional[str] = None
     field_name: Optional[str] = None
+    feature_name: Optional[str] = None
     equals: object = _EQUALS_SENTINEL
     any_of: Sequence["Condition"] = field(default_factory=tuple)
+    all_of: Sequence["Condition"] = field(default_factory=tuple)
 
     @staticmethod
     def from_mapping(mapping: Optional[dict]) -> Optional["Condition"]:
@@ -51,6 +53,18 @@ class Condition:
                 return Condition(any_of=tuple(subconditions))
             return None
 
+        all_of_raw = mapping.get("allOf") or mapping.get("all_of")
+        if isinstance(all_of_raw, (list, tuple)):
+            subconditions = [
+                Condition.from_mapping(item)
+                for item in all_of_raw
+                if isinstance(item, dict)
+            ]
+            subconditions = [cond for cond in subconditions if cond]
+            if subconditions:
+                return Condition(all_of=tuple(subconditions))
+            return None
+
         mask_field = mapping.get("mask_field") or mapping.get("mask")
         bit_value = mapping.get("bit")
         try:
@@ -60,9 +74,10 @@ class Condition:
 
         field_present = mapping.get("field_present")
         field_name = mapping.get("field")
+        feature_name = mapping.get("feature")
         equals_value = mapping.get("equals", _EQUALS_SENTINEL)
 
-        if not any((mask_field, field_present, field_name)):
+        if not any((mask_field, field_present, field_name, feature_name)):
             return None
 
         return Condition(
@@ -70,6 +85,7 @@ class Condition:
             bit=bit,
             field_present=field_present,
             field_name=field_name,
+            feature_name=feature_name,
             equals=equals_value,
         )
 
@@ -96,6 +112,7 @@ class Spec:
     delimiter: str
     terminator: str
     fields: Sequence[FieldSpec]
+    config: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -122,10 +139,19 @@ class _TokenStream:
 
 
 class _ParseContext:
-    def __init__(self, parent: Optional["_ParseContext"] = None):
+    def __init__(
+        self,
+        parent: Optional["_ParseContext"] = None,
+        *,
+        features: Optional[dict[str, object]] = None,
+    ):
         self.parent = parent
         self.values: dict[str, object] = {}
         self.present: set[str] = set()
+        if parent is None:
+            self._features = dict(features or {})
+        else:
+            self._features = parent._features
 
     def set(self, name: str, value: object, raw: Optional[str]) -> None:
         self.values[name] = value
@@ -145,6 +171,13 @@ class _ParseContext:
         if self.parent:
             return self.parent.is_present(name)
         return False
+
+    def get_feature(self, name: str) -> Optional[object]:
+        if name in self._features:
+            return self._features[name]
+        if self.parent:
+            return self.parent.get_feature(name)
+        return None
 
 
 def identify_head(line: str) -> Optional[HeadInfo]:
@@ -239,6 +272,7 @@ def load_spec(model: str, message: str) -> Spec:
     table_name = data.get("table_name") or f"{message.lower()}_{model.lower()}"
     delimiter = data.get("delimiter", ",")
     terminator = data.get("terminator", "$")
+    config = data.get("config") or {}
     sections = data.get("schema", {}).get("sections", [])
     fields: List[FieldSpec] = []
     for section in sections or []:
@@ -252,6 +286,7 @@ def load_spec(model: str, message: str) -> Spec:
         delimiter=delimiter,
         terminator=terminator,
         fields=tuple(fields),
+        config=dict(config),
     )
 
 
@@ -294,7 +329,7 @@ def parse_line(
     model = model or spec.model
     tokens = _tokenize(line, delimiter=spec.delimiter, terminator=spec.terminator)
     stream = _TokenStream(tokens)
-    context = _ParseContext()
+    context = _ParseContext(features=spec.config)
     result: dict[str, object] = {}
     for field in spec.fields:
         value = _parse_field(field, stream, context)
@@ -365,6 +400,8 @@ def _should_parse(field: FieldSpec, context: _ParseContext) -> bool:
 def _check_condition(condition: Condition, context: _ParseContext) -> bool:
     if condition.any_of:
         return any(_check_condition(cond, context) for cond in condition.any_of)
+    if condition.all_of:
+        return all(_check_condition(cond, context) for cond in condition.all_of)
     if condition.mask_field:
         mask_value = context.get(condition.mask_field)
         if mask_value is None:
@@ -375,6 +412,11 @@ def _check_condition(condition: Condition, context: _ParseContext) -> bool:
     if condition.field_name is not None and condition.equals is not _EQUALS_SENTINEL:
         value = context.get(condition.field_name)
         return value == condition.equals
+    if condition.feature_name:
+        value = context.get_feature(condition.feature_name)
+        if condition.equals is not _EQUALS_SENTINEL:
+            return value == condition.equals
+        return bool(value)
     return False
 
 
