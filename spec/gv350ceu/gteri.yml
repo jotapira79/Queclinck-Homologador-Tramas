@@ -4,7 +4,11 @@ message_family: "ERI"
 encoding: "ASCII"
 delimiter: ","
 terminator: "$"
-version_field: { name: full_protocol_version, length_variant: [6,7], format: hex }
+
+version_field:
+  name: full_protocol_version
+  length_variant: [6, 7]
+  format: hex
 
 schema:
   sections:
@@ -12,31 +16,34 @@ schema:
       fields:
         - { name: header, const_any: ["+RESP:GT", "+BUFF:GT"], type: string }
         - { name: message, const: "ERI", type: string }
-        - { name: full_protocol_version, type: hex, length_variant: [6,7] }
+        - { name: full_protocol_version, type: hex, length_variant: [6, 7] }
         - { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$" }
         - { name: device_name, type: string, max_length: 20 }
 
     - name: body
       fields:
-        # Campos base del ERI
+        # ---- Base ERI ----
         - { name: eri_mask, type: hex, length: 8 }
         - { name: external_power_mv, type: int, min: 0, max: 32000, optional: true }
         - { name: report_type, type: string, length: 2, pattern: "^[0-9A-Fa-f]{2}$" }
         - { name: number, type: int, min: 0, max: 15, optional: true }
-        - { name: gnss_accuracy, type: int, min: 0, max: 50, optional: true }
+        - { name: gnss_accuracy, type: int, min: 0, max: 500, optional: true }
         - { name: speed_kmh, type: float, min: 0.0, max: 999.9 }
         - { name: azimuth_deg, type: int, min: 0, max: 359 }
-        - { name: altitude_m, type: float, optional: true }
-        - { name: lon, type: float, min: -180.0, max: 180.0 }
+        - { name: altitude_m, type: float, min: -1000.0, max: 30000.0, optional: true }
         - { name: lat, type: float, min: -90.0, max: 90.0 }
+        - { name: lon, type: float, min: -180.0, max: 180.0 }
         - { name: gnss_utc_time, type: datetime, format: "YYYYMMDDHHMMSS" }
+
+        # ---- Red celular ----
         - { name: mcc, type: string, length: 4, pattern: "^0[0-9]{3}$" }
         - { name: mnc, type: string, length: 4, pattern: "^0[0-9]{3}$" }
         - { name: lac_hex, type: hex, length: 4 }
-        - { name: cell_id_hex, type: hex, length_variant: [4,8] }
-        - { name: position_append_mask, type: hex, length_variant: [2,4], optional: true }
+        - { name: cell_id_hex, type: hex, length_variant: [4, 8] }
 
-        # Campos controlados por position_append_mask
+        # ---- Append de posición ----
+        - { name: position_append_mask, type: hex, length_variant: [2, 4], optional: true }
+
         - name: satellites_in_use
           type: int
           min: 0
@@ -77,21 +84,26 @@ schema:
         - name: gnss_jamming_state
           type: int
           min: 0
-          max: 3
+          max: 6
           optional: true
           present_if: { mask_field: position_append_mask, bit: 4 }
 
-        # Contadores y entradas
+        # ---- Contadores, entradas y estado ----
         - { name: mileage_km, type: float, min: 0.0, max: 4294967.0, optional: true }
         - { name: hour_meter, type: string, pattern: "^[0-9]{1,7}:[0-5][0-9]:[0-5][0-9]$", optional: true }
-        - { name: analog_in_1, type: string, optional: true }
-        - { name: analog_in_2, type: string, optional: true }
-        - { name: analog_in_3, type: string, optional: true }
+        - { name: analog_in_1, type: float, min: 0.0, max: 30.0, optional: true }
+        - { name: analog_in_2, type: float, min: 0.0, max: 16.0, optional: true }
+        - { name: analog_in_3, type: float, min: 0.0, max: 16.0, optional: true }
         - { name: backup_batt_percent, type: int, min: 0, max: 100, optional: true }
-        - { name: device_status, type: hex, length_variant: [6,10], optional: true }
+        - { name: device_status, type: hex, length_variant: [6, 10], optional: true }
         - { name: uart_device_type, type: int, min: 0, max: 7, optional: true }
 
-        # Accesorios BLE (bit 8 del ERI Mask)
+        # ---- Campos añadidos en revisiones recientes ----
+        - { name: rpm, type: int, min: 0, max: 20000, optional: true }
+        - { name: total_revolutions_counter, type: int, min: 0, max: 4294967295, optional: true }
+        - { name: angle_sensor_mode, type: int, min: 0, max: 3, optional: true }
+
+        # ---- BLE (bit 8 de eri_mask) ----
         - name: ble_count
           type: int
           min: 0
@@ -110,52 +122,63 @@ schema:
             - { name: ble_index, type: string, pattern: "^[0-9A-Fa-f]{2}$" }
             - { name: ble_type, type: int, min: 0, max: 255 }
             - { name: ble_model, type: int, min: 0, max: 255, optional: true }
-            - { name: ble_raw, type: hex, max_length: 18, optional: true }
-            - { name: ble_append_mask, type: hex, length_variant: [2,4,8], optional: true }
+            - { name: ble_raw, type: hex, max_length: 64, optional: true }
+            - { name: ble_append_mask, type: hex, length_variant: [2, 4, 8], optional: true }
+
             - name: ble_name
               type: string
-              max_length: 20
+              max_length: 32
               optional: true
               present_if: { mask_field: ble_append_mask, bit: 0 }
+
             - name: ble_mac
               type: hex
               length: 12
               optional: true
               present_if: { mask_field: ble_append_mask, bit: 1 }
+
             - name: ble_status
               type: int
               min: 0
-              max: 1
+              max: 3
               optional: true
               present_if: { mask_field: ble_append_mask, bit: 2 }
+
             - name: ble_batt_mv
               type: int
               min: 0
               max: 5000
               optional: true
               present_if: { mask_field: ble_append_mask, bit: 3 }
+
             - name: ble_temp_c
               type: float
               optional: true
               present_if: { mask_field: ble_append_mask, bit: 4 }
+
             - name: ble_humidity_pct
-              type: int
+              type: float
+              min: 0
+              max: 100
               optional: true
               present_if: { mask_field: ble_append_mask, bit: 5 }
+
             - name: ble_magnet_id
               type: int
               optional: true
               present_if: { mask_field: ble_append_mask, bit: 12 }
+
             - name: ble_mag_event_counter
               type: int
               optional: true
               present_if: { mask_field: ble_append_mask, bit: 12 }
+
             - name: ble_magnet_state
               type: int
               optional: true
               present_if: { mask_field: ble_append_mask, bit: 12 }
 
-        # RAT/Banda (bit 13 del ERI Mask)
+        # ---- RAT/Banda (bit 13 de eri_mask) ----
         - name: rat
           type: int
           min: 0
@@ -166,7 +189,7 @@ schema:
 
         - name: band
           type: string
-          max_length: 6
+          max_length: 8
           optional: true
           present_if: { field_present: rat }
 
@@ -178,5 +201,6 @@ schema:
 validation:
   rules:
     - { name: header_and_message, assert: "(header in ['+RESP:GT', '+BUFF:GT']) and message == 'ERI'" }
-    - { name: terminator,        assert: "line.endswith('$')" }
-    - { name: lat_lon_range,     assert: "(-90.0 <= lat <= 90.0) and (-180.0 <= lon <= 180.0)" }
+    - { name: terminator, assert: "line.endswith('$')" }
+    - { name: lat_lon_range, assert: "(-90.0 <= lat <= 90.0) and (-180.0 <= lon <= 180.0)" }
+    - { name: speed_azimuth_consistency, level: warn, assert: "not (speed_kmh == 0 and azimuth_deg not in [0, 360])" }
