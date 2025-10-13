@@ -30,9 +30,13 @@ schema:
       fields:
         # ---- Base fija de ERI ----
         - { name: eri_mask, type: hex, length: 8 }
+        - { name: external_power_mv, type: int, min: 0, max: 32000, optional: true }
         - { name: report_type, type: string, length: 2, pattern: "^[0-9A-Fa-f]{2}$" }
+        - { name: number, type: int, min: 1, max: 15}
+        - { name: gnss_accuracy, type: int, min: 0, max: 500}
         - { name: speed_kmh, type: float, min: 0.0, max: 999.9 }
         - { name: azimuth_deg, type: int, min: 0, max: 359 }
+        - { name: altitude_m, type: float, min: -1000.0, max: 30000.0, optional: true }
         - { name: lat, type: float, min: -90.0, max: 90.0 }
         - { name: lon, type: float, min: -180.0, max: 180.0 }
         - { name: gnss_utc_time, type: datetime, format: "YYYYMMDDHHMMSS" }
@@ -48,12 +52,6 @@ schema:
     # =======================================================
     - name: body_variable
       fields:
-        # ---- Básicos opcionales ----
-        - { name: external_power_mv, type: int, min: 0, max: 32000, optional: true }
-        - { name: number, type: int, min: 0, max: 15, optional: true }
-        - { name: gnss_accuracy, type: int, min: 0, max: 500, optional: true }
-        - { name: altitude_m, type: float, min: -1000.0, max: 30000.0, optional: true }
-
         # ---- Máscara de append de posición (y dependientes) ----
         - { name: position_append_mask, type: hex, length_variant: [2, 4], optional: true }
 
