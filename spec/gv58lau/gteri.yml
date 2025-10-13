@@ -108,4 +108,161 @@ schema:
             - { mask_field: pos_append_mask, bit: 2 }   # o V
             - { mask_field: pos_append_mask, bit: 3 }   # o 3D
 
-        # --- Bloque
+        # --- Bloque de accesorios BLE (habilitado por ERI Mask bit 8) ---
+        - name: ble_count
+          type: int
+          min: 0
+          max: 16
+          enabled_if_any:
+            - { mask_field: eri_mask, bit: 8 }
+
+        - name: ble_accessories
+          type: group_repeated
+          repeat: ble_count
+          enabled_if_any:
+            - { mask_field: eri_mask, bit: 8 }
+          fields:
+            - { name: ble_index, type: int, min: 0, max: 63 }
+            - { name: ble_type,  type: int, min: 0, max: 255 }
+            - { name: ble_model, type: int, min: 0, max: 255 }
+            - { name: ble_raw_data, type: string, optional: true }
+            - { name: ble_append_mask, type: hex, length: 2, optional: true }
+
+            # Subcampos controlados por ble_append_mask
+            - name: ble_name
+              type: string
+              max_length: 32
+              present_if: { mask_field: ble_append_mask, bit: 0 }
+
+            - name: ble_mac
+              type: hex
+              length: 12
+              present_if: { mask_field: ble_append_mask, bit: 1 }
+
+            - name: ble_status
+              type: int
+              min: 0
+              max: 1
+              present_if: { mask_field: ble_append_mask, bit: 2 }
+
+            - name: ble_batt_mv
+              type: int
+              min: 0
+              max: 5000
+              present_if: { mask_field: ble_append_mask, bit: 3 }
+
+            - name: ble_temp_c
+              type: float
+              min: -40.0
+              max: 85.0
+              precision: 2
+              present_if: { mask_field: ble_append_mask, bit: 4 }
+
+            - name: ble_humidity_rh
+              type: float
+              min: 0.0
+              max: 100.0
+              precision: 1
+              present_if: { mask_field: ble_append_mask, bit: 5 }
+
+            - name: ble_io_output_status
+              type: int
+              min: 0
+              max: 3
+              present_if: { mask_field: ble_append_mask, bit: 7 }
+
+            - name: ble_io_input_status
+              type: int
+              min: 0
+              max: 1
+              present_if: { mask_field: ble_append_mask, bit: 7 }
+
+            - name: ble_io_analog_mv
+              type: int
+              min: 0
+              max: 32000
+              present_if: { mask_field: ble_append_mask, bit: 7 }
+
+            - name: ble_mode
+              type: int
+              min: 0
+              max: 10
+              present_if: { mask_field: ble_append_mask, bit: 8 }
+
+            - name: ble_event
+              type: int
+              min: 0
+              max: 10
+              present_if: { mask_field: ble_append_mask, bit: 8 }
+
+            - name: ble_tire_pressure_kpa
+              type: int
+              min: 0
+              max: 500
+              present_if: { mask_field: ble_append_mask, bit: 9 }
+
+            - name: ble_timestamp
+              type: datetime
+              format: "YYYYMMDDHHMMSS"
+              present_if: { mask_field: ble_append_mask, bit: 10 }
+
+            - name: ble_temp_c_enhanced
+              type: float
+              min: -40.00
+              max: 85.00
+              precision: 2
+              present_if: { mask_field: ble_append_mask, bit: 11 }
+
+            - name: ble_magnet_id
+              type: hex
+              length: 2
+              present_if: { mask_field: ble_append_mask, bit: 12 }
+
+            - name: ble_mag_event_counter
+              type: int
+              min: 0
+              max: 65535
+              present_if: { mask_field: ble_append_mask, bit: 12 }
+
+            - name: ble_magnet_state
+              type: int
+              enum: [0,1]
+              present_if: { mask_field: ble_append_mask, bit: 12 }
+
+            - name: ble_batt_pct
+              type: int
+              min: 0
+              max: 100
+              present_if: { mask_field: ble_append_mask, bit: 13 }
+
+            - name: ble_relay_state
+              type: int
+              enum: [0,1]
+              present_if: { mask_field: ble_append_mask, bit: 14 }
+
+        # Reservado adicional (si ciertos firmwares agregan un campo extra suelto)
+        - { name: reserved_3, type: string, optional: true }
+
+    # -----------------------------
+    # COLA (FIJA)
+    # -----------------------------
+    - name: tail
+      fields:
+        - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS" }
+        - { name: count_hex, type: hex, length: 4 }
+
+validation:
+  rules:
+    - { name: header_and_message, assert: "(header in ['+RESP:GT', '+BUFF:GT']) and message == 'ERI'" }
+    - { name: terminator,        assert: "line.endswith('$')" }
+  notes:
+    - "pos_append_mask (2 hex): bit0=satellites, bit1=Horizontal Accuracy (alias hdop), bit2=Vertical Accuracy (alias vdop), bit3=3D Accuracy (alias pdop)."
+    - "eri_mask (8 hex): incluye el bit 8 para habilitar el bloque de accesorios BLE."
+    - "cell_id puede llegar en 16 o 32 bits (length_variant [4,8])."
+    - "Al faltar bloques opcionales (pos_append_mask sin bits, BLE deshabilitado), la cantidad total de campos DISMINUYE."
+
+examples:
+  - raw: "+RESP:GTERI,8020040900,866314060268081,GV58LAU,00000100,10,1,2,14.2,71,35.6,117.243103,31.854079,20250320015848,0460,0000,550B,0E9E30A5,0009,9,2.01,1.47,2.49,0.0,1234:56:07,,85,220100,,2,00,1,0,00000001,001F,TD_100109,FD6D3DE6D704,1,3600,18,01,1,3,0000006D,011F,DU_100361,F022A2143F36,1,3500,0,9,0,20250320015850,00D0$"
+    parsed_keys_must_include: [imei, device_name, eri_mask, lon, lat, gnss_utc, pos_append_mask, satellites, hdop, vdop, pdop, send_time, count_hex]
+  - raw: "+BUFF:GTERI,8020040900,866314060965330,GV58LAU,00000008,21,3,1,0.0,0,0.0,0.000000,0.000000,20250930110413,0736,0001,1234,0000,0001,8,1.50,,,100,220100,,0,20250930110413,ED27$"
+    parsed_keys_must_include: [imei, device_name, eri_mask, pos_append_mask, hdop, mileage_km, send_time, count_hex]
