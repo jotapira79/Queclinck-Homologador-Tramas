@@ -50,22 +50,10 @@ schema:
         # --- Position Append Mask (fijo; controla bloque variable) ---
         - { name: pos_append_mask, type: hex, length: 2, description: "bit0=satellites, bit1=H-Acc, bit2=V-Acc, bit3=3D-Acc; algunos firmwares incluyen GNSS trigger" }
 
-        # --- Contadores / estado vehículo (fijo) ---
-        - { name: mileage_km, type: float, min: 0.0, max: 4294967.0, precision: 1 }
-        - { name: hour_meter, type: string, pattern: "^[0-9]{1,7}:[0-5][0-9]:[0-5][0-9]$", description: "D:HH:MM" }
-        - { name: backup_batt_pct, type: int, min: 0, max: 100 }
-        - { name: device_status, type: hex, length: 6 }
-
-        # --- Reservados (fijos en posición; pueden venir vacíos) ---
-        - { name: reserved_1, type: string, nullable: true }
-        - { name: reserved_2, type: string, nullable: true }
-        - { name: reserved_3, type: string, nullable: true }
-        - { name: reserved_4, type: string, nullable: true }
-
-    # -----------------------------
-    # CUERPO - BLOQUES OPCIONALES (VARÍAN EL CONTEO)
-    # -----------------------------
-    - name: body_variable
+    # =======================================================
+    # CUERPO VARIABLE (Opcional / controla la longitud total)
+    # =======================================================
+        - name: body_variable
       fields:
 
         # --- Sub-bloque controlado por pos_append_mask ---
@@ -74,6 +62,15 @@ schema:
           min: 0
           max: 72
           present_if: { mask_field: pos_append_mask, bit: 0 }
+        
+        - name: gnss_trigger_type
+          type: int
+          min: 0
+          max: 4
+          present_if_any:
+            - { mask_field: pos_append_mask, bit: 1 }
+            - { mask_field: pos_append_mask, bit: 2 }
+            - { mask_field: pos_append_mask, bit: 3 }
 
         - name: hdop
           type: float
@@ -96,14 +93,21 @@ schema:
           precision: 2
           present_if: { mask_field: pos_append_mask, bit: 3 }
 
-        - name: gnss_trigger_type
-          type: int
-          min: 0
-          max: 4
-          present_if_any:
-            - { mask_field: pos_append_mask, bit: 1 }
-            - { mask_field: pos_append_mask, bit: 2 }
-            - { mask_field: pos_append_mask, bit: 3 }
+
+        # --- Contadores / estado vehículo (fijo) ---
+        - { name: mileage_km, type: float, min: 0.0, max: 4294967.0, precision: 1 }
+        - { name: hour_meter, type: string, pattern: "^[0-9]{1,7}:[0-5][0-9]:[0-5][0-9]$", description: "D:HH:MM" }
+        - { name: reserved_1, type: string, nullable: true }
+        - { name: reserved_2, type: string, nullable: true }
+        - { name: reserved_3, type: string, nullable: true }
+        - { name: backup_batt_pct, type: int, min: 0, max: 100 }
+        - { name: device_status, type: hex, length: 6 }
+        - { name: reserved_4, type: string, nullable: true }
+
+
+    # -----------------------------
+    # CUERPO - BLOQUES OPCIONALES (VARÍAN EL CONTEO)
+    # -----------------------------
 
         # --- CAN Data (habilitado por ERI Mask bit 2) ---
         - name: can_data
