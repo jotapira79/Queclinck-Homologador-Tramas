@@ -351,6 +351,12 @@ def _parse_model_specific_default(fields: List[str], start_idx: int) -> Dict[str
         return mask_value is not None and (mask_value & bit) != 0
 
     cursor = 0
+
+    def skip_empty_values() -> None:
+        nonlocal cursor
+        while cursor < len(remaining) and (remaining[cursor] or "") == "":
+            cursor += 1
+
     if cursor < len(remaining):
         raw_sat = remaining[cursor]
         if mask_has(0x01):
@@ -361,7 +367,7 @@ def _parse_model_specific_default(fields: List[str], start_idx: int) -> Dict[str
             cursor += 1
 
     dop_keys = ["hdop", "vdop", "pdop"]
-    dop_values: List[Optional[float]] = []
+    dop_values: List[Tuple[int, Optional[float]]] = []
     dop_pattern = r"\d{1,2}(?:\.\d{1,2})?"
     for idx in range(3):
         if cursor >= len(remaining):
@@ -370,34 +376,39 @@ def _parse_model_specific_default(fields: List[str], start_idx: int) -> Dict[str
         expected = mask_has(0x02 << idx)
         if (value or "") == "":
             if expected:
-                dop_values.append(None)
+                dop_values.append((idx, None))
+                cursor += 1
+                continue
+            if any(mask_has(0x02 << future_idx) for future_idx in range(idx + 1, len(dop_keys))):
                 cursor += 1
                 continue
             break
         if re.fullmatch(dop_pattern, value or ""):
-            dop_values.append(_safe_float(value))
+            dop_values.append((idx, _safe_float(value)))
             cursor += 1
             continue
         if expected:
-            dop_values.append(None)
+            dop_values.append((idx, None))
             cursor += 1
             continue
         break
 
-    for idx, value in enumerate(dop_values):
-        if idx < len(dop_keys):
-            out[dop_keys[idx]] = value
-    else:
-        if cursor < len(remaining) and re.fullmatch(r"\d", remaining[cursor] or ""):
-            out["gnss_trigger_type"] = _safe_int(remaining[cursor])
-            cursor += 1
-        if cursor < len(remaining) and re.fullmatch(r"\d", remaining[cursor] or ""):
-            out["gnss_jamming_state"] = _safe_int(remaining[cursor])
-            cursor += 1
+    for idx, value in dop_values:
+        out[dop_keys[idx]] = value
+
+    skip_empty_values()
+    if cursor < len(remaining) and re.fullmatch(r"\d", remaining[cursor] or ""):
+        out["gnss_trigger_type"] = _safe_int(remaining[cursor])
+        cursor += 1
+        skip_empty_values()
+    if cursor < len(remaining) and re.fullmatch(r"\d", remaining[cursor] or ""):
+        out["gnss_jamming_state"] = _safe_int(remaining[cursor])
+        cursor += 1
 
     mileage_set = False
     hour_set = False
 
+    skip_empty_values()
     if cursor < len(remaining) and _is_hour_meter(remaining[cursor]):
         out["hour_meter"] = remaining[cursor]
         cursor += 1
@@ -414,11 +425,6 @@ def _parse_model_specific_default(fields: List[str], start_idx: int) -> Dict[str
         out["mileage_km"] = _safe_float(remaining[cursor])
         cursor += 1
         mileage_set = True
-
-    def skip_empty_values() -> None:
-        nonlocal cursor
-        while cursor < len(remaining) and (remaining[cursor] or "") == "":
-            cursor += 1
 
     analog_pattern = r"-?\d+(?:\.\d+)?|F\d{1,3}"
 
