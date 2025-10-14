@@ -102,6 +102,7 @@ schema:
           min: 0
           max: 19
           optional: true
+          default_if_absent: 0
           present_if: { mask_field: eri_mask, bit: 1 }
 
         - name: one_wire_devices

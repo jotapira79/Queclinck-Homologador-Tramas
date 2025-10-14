@@ -103,6 +103,9 @@ class FieldSpec:
     enabled_if_any: Sequence[Condition] = field(default_factory=tuple)
     repeat: Optional[str] = None
     fields: Sequence["FieldSpec"] = field(default_factory=tuple)
+    min_value: Optional[float] = None
+    max_value: Optional[float] = None
+    default_if_absent: Optional[object] = None
 
 
 @dataclass(frozen=True)
@@ -137,6 +140,16 @@ class _TokenStream:
         value = self._tokens[self._index]
         self._index += 1
         return value
+
+    def peek(self) -> Optional[str]:
+        if self._index >= len(self._tokens):
+            return None
+        return self._tokens[self._index]
+
+    def push_back(self, count: int = 1) -> None:
+        if count <= 0:
+            return
+        self._index = max(0, self._index - count)
 
 
 class _ParseContext:
@@ -216,12 +229,31 @@ def _ensure_sequence(value) -> Sequence[str]:
     return (str(value),)
 
 
+def _normalize_limit(value) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.lower().startswith("0x"):
+            return float(int(text, 16))
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
 def _build_field(entry: dict) -> FieldSpec:
     name = str(entry.get("name"))
     field_type = str(entry.get("type", "string"))
     optional = bool(entry.get("optional", False))
     const = entry.get("const")
     const_any = _ensure_sequence(entry.get("const_any"))
+    min_value = _normalize_limit(entry.get("min"))
+    max_value = _normalize_limit(entry.get("max"))
+    default_if_absent = entry.get("default_if_absent")
 
     present_if = Condition.from_mapping(entry.get("present_if"))
     present_if_any_list = [
@@ -263,6 +295,9 @@ def _build_field(entry: dict) -> FieldSpec:
         enabled_if_any=tuple(enabled_if_any_list),
         repeat=repeat,
         fields=nested_fields,
+        min_value=min_value,
+        max_value=max_value,
+        default_if_absent=default_if_absent,
     )
 
 
@@ -332,15 +367,29 @@ def parse_line(
     stream = _TokenStream(tokens)
     context = _ParseContext(features=spec.config)
     result: dict[str, object] = {}
-    for field in spec.fields:
-        value = _parse_field(field, stream, context)
+    for index, field in enumerate(spec.fields):
+        remaining = spec.fields[index + 1 :]
+        value = _parse_field(field, stream, context, remaining_fields=remaining)
         if value is not _SKIP:
             result[field.name] = value
     return result
 
 
-def _parse_field(field: FieldSpec, stream: _TokenStream, context: _ParseContext):
+def _parse_field(
+    field: FieldSpec,
+    stream: _TokenStream,
+    context: _ParseContext,
+    *,
+    remaining_fields: Sequence[FieldSpec] = (),
+):
     if not _should_parse(field, context):
+        return _SKIP
+
+    required_tokens = _minimum_required_tokens(remaining_fields, context)
+    if field.optional and stream.remaining() <= required_tokens:
+        if field.default_if_absent is not None:
+            context.set(field.name, field.default_if_absent, None)
+            return field.default_if_absent
         return _SKIP
 
     if field.type == "group_repeated":
@@ -351,6 +400,9 @@ def _parse_field(field: FieldSpec, stream: _TokenStream, context: _ParseContext)
 
     if stream.remaining() <= 0:
         if field.optional:
+            if field.default_if_absent is not None:
+                context.set(field.name, field.default_if_absent, None)
+                return field.default_if_absent
             return _SKIP
         raise ValueError(f"Faltan campos para {field.name}")
 
@@ -366,6 +418,16 @@ def _parse_field(field: FieldSpec, stream: _TokenStream, context: _ParseContext)
             raise ValueError(f"El campo {field.name} no coincide con los prefijos permitidos")
 
     value = _convert_value(raw, field.type)
+
+    if not _value_within_limits(field, value):
+        if field.optional:
+            stream.push_back()
+            if field.default_if_absent is not None:
+                context.set(field.name, field.default_if_absent, None)
+                return field.default_if_absent
+            return _SKIP
+        raise ValueError(f"El campo {field.name} está fuera de los rangos permitidos")
+
     context.set(field.name, value, raw)
     return value
 
@@ -385,8 +447,14 @@ def _parse_group(
     for _ in range(count):
         child_context = _ParseContext(parent=context)
         item: dict[str, object] = {}
-        for nested in field.fields:
-            value = _parse_field(nested, stream, child_context)
+        for index, nested in enumerate(field.fields):
+            nested_remaining = field.fields[index + 1 :]
+            value = _parse_field(
+                nested,
+                stream,
+                child_context,
+                remaining_fields=nested_remaining,
+            )
             if value is not _SKIP:
                 item[nested.name] = value
         items.append(item)
@@ -480,6 +548,45 @@ def _to_int(value: object) -> Optional[int]:
         return int(text, base)
     except (TypeError, ValueError):
         return None
+
+
+def _value_within_limits(field: FieldSpec, value: object) -> bool:
+    if value is None:
+        return True
+    if field.min_value is None and field.max_value is None:
+        return True
+
+    numeric: Optional[float]
+    if isinstance(value, bool):
+        numeric = float(int(value))
+    elif isinstance(value, (int, float)):
+        numeric = float(value)
+    else:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return False
+
+    if field.min_value is not None and numeric < field.min_value:
+        return False
+    if field.max_value is not None and numeric > field.max_value:
+        return False
+    return True
+
+
+def _minimum_required_tokens(
+    fields: Sequence[FieldSpec], context: _ParseContext
+) -> int:
+    required = 0
+    for field in fields:
+        if not _should_parse(field, context):
+            continue
+        if field.type == "group_repeated":
+            continue
+        if field.optional:
+            continue
+        required += 1
+    return required
 
 
 def _convert_value(raw: str, field_type: str):
