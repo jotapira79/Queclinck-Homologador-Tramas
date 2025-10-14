@@ -111,7 +111,7 @@ Controla los **campos posicionales** después de `<Cell ID>`.
 ### 4.2 ERI Mask (4 bytes, hex)
 Controla los **bloques ERI**:
 - **Bit 0** → *Digital Fuel Sensor Data*.
-- **Bit 1** → *1‑wire Data* (incluye ID/Type/Data). Si Type=1 (temperatura), los datos están en **complemento a dos**; convertir a decimal y multiplicar × 0.0625 °C.
+- **Bit 1** → *1‑wire Data* (incluye ID/Type/Data). Si Type=1 (temperatura), los datos están en **complemento a dos**; convertir a decimal y multiplicar × 0.0625 °C. Si el bit está deshabilitado, el bloque completo (número de dispositivos y lista) no aparece en la trama. Cuando `Device Number` es `0`, tampoco se listan ID/Type/Data. Algunos firmwares omiten `Type` y/o `Data` cuando no hay información adicional; el parser acepta esos campos vacíos/ausentes.
 - **Bit 2** → *CAN Data*.
 - **Bit 10** → *Fuel Sensor Data* (si *Sensor Type* es 2 ó 6, puede incluir *Fuel Temperature*).
 

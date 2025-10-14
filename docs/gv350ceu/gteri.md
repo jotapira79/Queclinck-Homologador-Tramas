@@ -105,7 +105,22 @@ Los campos solo aparecen si el bit correspondiente está activo. El orden siempr
 | `device_status` | hex | 3 bytes (24 bits) o extendido (40 bits). |
 | `uart_device_type` | int | Tipo de periférico por UART (0,1,7...). |
 
-### 3.4 Accesorios BLE (bit 8 de `eri_mask`)
+### 3.4 1-Wire (bit 1 de `eri_mask`)
+
+Cuando el bit 1 de `eri_mask` está habilitado, el equipo reporta la cantidad de dispositivos 1-Wire conectados y, para cada uno, la información disponible. Si el bit está en `0`, el bloque completo no aparece en la trama.
+
+1. `one_wire_device_number` indica cuántos dispositivos se describen. Si es `0`, no se listan campos adicionales.
+2. Cada elemento de `one_wire_devices` incluye los siguientes campos en el orden indicado:
+
+   | Campo | Tipo | Notas |
+   |---|---|---|
+   | `one_wire_device_id` | hex | ID del dispositivo (8 bytes en ASCII HEX). |
+   | `one_wire_device_type?` | int | Tipo de accesorio (1 = sensor de temperatura). Puede omitirse si el firmware no lo provee. |
+   | `one_wire_device_data?` | hex | Datos crudos asociados. Solo se publica cuando el bit 1 está activo en el *mask* y el equipo tiene información adicional. |
+
+Los campos marcados con `?` son opcionales en la trama y el parser los tolera tanto vacíos como ausentes.
+
+### 3.5 Accesorios BLE (bit 8 de `eri_mask`)
 
 Cuando el bit 8 está activo:
 
@@ -125,7 +140,7 @@ Cuando el bit 8 está activo:
 
 Todos los valores se procesan en el orden descrito; los no presentes se omiten.
 
-### 3.5 RAT / Band (bit 13 de `eri_mask`)
+### 3.6 RAT / Band (bit 13 de `eri_mask`)
 
 Si el bit 13 está activo se agregan dos campos al final del cuerpo:
 
