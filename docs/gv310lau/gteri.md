@@ -14,7 +14,7 @@ Este documento resume, normaliza y hace operativa la especificación del mensaje
 
 ## 1) Descripción general
 
-- **Nombre de mensaje:** `+RESP:GTERI`  
+- **Nombre de mensaje:** `+RESP/+BUFF:GTERI`
 - **Dispositivo:** `GV310LAU`  
 - **Propósito:** Reporte de posición ampliado (sustituye a `+RESP:GTFRI` cuando la función ERI está habilitada).  
 - **Formato:** ASCII, campos separados por coma `,` y terminados con `$`.
@@ -43,7 +43,7 @@ La trama se divide en **Head**, **Body** y **Tail**. A continuación, se listan 
 
 | Parte  | Campo            | Longitud | Rango/Formato                            |
 |--------|------------------|----------|------------------------------------------|
-| Head   | Header           | 8        | `+RESP:GT`                               |
+| Head   | Header           | 8        | `+RESP:GT` \| `+BUFF:GT`                 |
 |        | Message Name     | 3        | `ERI`                                     |
 |        | Coma separadora  | 1        | `,`                                       |
 |        | Full Proto Ver.  | 6        | `000000` – `FFFFFF` (hex)                |
@@ -169,7 +169,7 @@ Incluye múltiples sub‑campos: Number, Index, Type, Model/BeaconID, Raw Data, 
 
 ## 5) Reglas de parsing y validación
 
-1. **Tokenización:** separar por comas `,`; validar que el primer token sea `+RESP:GTERI` y el último termine con `$`.
+1. **Tokenización:** separar por comas `,`; validar que el primer token sea `+RESP:GTERI` o `+BUFF:GTERI` y el último termine con `$`.
 2. **Tipos:** convertir numéricos (enteros, float) y fechas (`YYYYMMDDHHMMSS` → UTC ISO‑8601).
 3. **Máscaras:** evaluar **Position Append Mask** (1 byte) y **ERI Mask** (4 bytes) para decidir presencia de campos opcionales.
 4. **Rangos:** aplicar validaciones de rango/forma indicadas en las tablas. Rechazar valores fuera de rango.
