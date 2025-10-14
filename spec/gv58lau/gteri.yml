@@ -239,10 +239,27 @@ schema:
               max: 100
               present_if: { mask_field: ble_append_mask, bit: 13 }
 
-            - name: ble_relay_state
-              type: int
-              enum: [0,1]
-              present_if: { mask_field: ble_append_mask, bit: 14 }
+        - name: ble_relay_state
+          type: int
+          enum: [0,1]
+          present_if: { mask_field: ble_append_mask, bit: 14 }
+
+        # --- RAT/Banda (habilitado por eri_mask bit 13/15) ---
+        - name: rat
+          type: int
+          min: 0
+          max: 255
+          optional: true
+          enabled_if_any:
+            - { mask_field: eri_mask, bit: 13 }
+            - { mask_field: eri_mask, bit: 15 }
+
+        - name: band
+          type: string
+          max_length: 8
+          optional: true
+          enabled_if_any:
+            - { field_present: rat }
 
     # -----------------------------
     # COLA (FIJA)

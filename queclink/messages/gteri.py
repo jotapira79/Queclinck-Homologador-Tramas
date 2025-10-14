@@ -137,6 +137,19 @@ def _mask_value(raw: Optional[str]) -> Optional[int]:
             return None
 
 
+def _mask_has_bit(mask_value: Optional[int], bit: int) -> bool:
+    return mask_value is not None and ((mask_value & (1 << bit)) != 0)
+
+
+def _looks_like_timestamp(candidate: Optional[str]) -> bool:
+    if not candidate:
+        return False
+    text = str(candidate).strip()
+    if not text or not text.isdigit():
+        return False
+    return len(text) >= 12
+
+
 def _ble_append_fields(mask_raw: Optional[str], tokens: Iterable[Optional[str]]) -> Tuple[Dict[str, Any], int]:
     """Parsear campos opcionales de un accesorio BLE según la append mask."""
 
@@ -607,11 +620,11 @@ def _parse_model_specific_default(fields: List[str], start_idx: int) -> Dict[str
     if rf433_block:
         out["rf433_block"] = rf433_block
 
-    # BLE (Bit 8) – si el bit está activo procesa; si no, solo si hay etiqueta explícita
+    # BLE (Bit 12) – si el bit está activo procesa; si no, solo si hay etiqueta explícita
     ble_block: Optional[Dict[str, Any]] = None
     if cursor < len(remaining):
         peek = (remaining[cursor] or "").strip().upper()
-        ble_bit_on = (eri_mask_value is not None) and ((eri_mask_value & (1 << 8)) != 0)
+        ble_bit_on = _mask_has_bit(eri_mask_value, 8) or _mask_has_bit(eri_mask_value, 12)
         if peek == "BLE":
             cursor += 1
             ble_block, cursor = _parse_ble_block(remaining, cursor)
@@ -625,23 +638,26 @@ def _parse_model_specific_default(fields: List[str], start_idx: int) -> Dict[str
         out["ble_block"] = ble_block
         out["ble_count"] = ble_block.get("accessory_number")
 
-    # RAT/Band (Bit 15) – si el bit está activo procesa; compat: si no está y pinta a RAT, se deja como antes
+    # RAT/Band (Bit 13) – si el bit está activo procesa; compat: solo si hay dato válido
     skip_empty_values()
     if cursor < len(remaining):
-        rat_bit_on = (eri_mask_value is not None) and ((eri_mask_value & (1 << 15)) != 0)
+        rat_bit_on = _mask_has_bit(eri_mask_value, 13) or _mask_has_bit(eri_mask_value, 15)
         rat_raw = remaining[cursor]
         rat_val = _safe_int(rat_raw)
-        # Condición: bit activo O heurística de compat (un entero razonable que parezca RAT)
-        if rat_val is not None and (rat_bit_on or True):
-            cursor += 1
-            band_raw = remaining[cursor] if cursor < len(remaining) else None
-            band_value = band_raw if band_raw not in (None, "") else None
-            if band_raw is not None:
+        if rat_val is not None:
+            band_raw = remaining[cursor + 1] if cursor + 1 < len(remaining) else None
+            band_text = str(band_raw).strip() if band_raw not in (None, "") else ""
+            band_looks_valid = band_text != "" and (len(band_text) <= 3 or not _looks_like_timestamp(band_text))
+            should_parse = rat_bit_on or band_looks_valid
+            if should_parse:
                 cursor += 1
-            out["rat_band"] = {"rat": rat_val, "band": band_value}
-            out["rat"] = rat_val
-            if band_value is not None:
-                out["band"] = band_value
+                band_value = band_text if band_text else None
+                if band_raw is not None:
+                    cursor += 1
+                out["rat_band"] = {"rat": rat_val, "band": band_value}
+                out["rat"] = rat_val
+                if band_value is not None:
+                    out["band"] = band_value
 
     out["remaining_blob"] = ",".join(value or "" for value in remaining[cursor:])
     return out
@@ -756,6 +772,15 @@ def _parse_model_specific_gv58(fields: List[str], start_idx: int) -> Dict[str, A
         minimal = idx + 1 + count * 5
         return len(remaining) >= minimal
 
+    # 1-Wire (Bit 1) – para compatibilidad expone bloque aunque no haya datos
+    if eri_mask_value is not None and ((eri_mask_value & (1 << 1)) != 0):
+        onewire_block, cursor_candidate = _parse_onewire_block(remaining, cursor)
+        if onewire_block is not None:
+            cursor = cursor_candidate
+            out.update(onewire_block)
+        else:
+            out.setdefault("onewire", {"count": 0, "devices": []})
+
     # CAN (ejemplo según ERI; GV58 puede traer CAN si el bit aplica)
     if eri_mask_value is not None and (eri_mask_value & (1 << 2)):
         # Si hubiese un token CAN dedicado, se podría capturar aquí (placeholder)
@@ -773,7 +798,7 @@ def _parse_model_specific_gv58(fields: List[str], start_idx: int) -> Dict[str, A
 
     # BLE (Bit 8) condicionado: si el bit está activo, intentar; o si la heurística BLE lo sugiere
     ble_block: Optional[Dict[str, Any]] = None
-    ble_bit_on = eri_mask_value is not None and ((eri_mask_value & (1 << 8)) != 0)
+    ble_bit_on = _mask_has_bit(eri_mask_value, 8) or _mask_has_bit(eri_mask_value, 12)
     if looks_like_ble_start(cursor) or ble_bit_on:
         ble_block, cursor = _parse_ble_block(remaining, cursor)
     if ble_block:
@@ -785,20 +810,39 @@ def _parse_model_specific_gv58(fields: List[str], start_idx: int) -> Dict[str, A
 
     skip_empty_values()
     rat_token = peek()
-    rat_bit_on = eri_mask_value is not None and ((eri_mask_value & (1 << 15)) != 0)
+    rat_bit_on = _mask_has_bit(eri_mask_value, 13) or _mask_has_bit(eri_mask_value, 15)
     if rat_token not in (None, ""):
         rat_val = _safe_int(rat_token)
-        if rat_val is not None and (rat_bit_on or True):  # compatibilidad
+        band_token = peek(1)
+        band_text = str(band_token).strip() if band_token not in (None, "") else ""
+        band_looks_valid = band_text != "" and (len(band_text) <= 3 or not _looks_like_timestamp(band_text))
+        should_parse = rat_bit_on or band_looks_valid
+        if rat_val is not None and should_parse:
             advance()
             band_token = peek()
             band_val: Optional[str] = None
             if band_token not in (None, ""):
-                band_val = band_token
+                band_val = str(band_token).strip()
                 advance()
             out["rat_band"] = {"rat": rat_val, "band": band_val}
             out["rat"] = rat_val
-            if band_val is not None:
+            if band_val:
                 out["band"] = band_val
+
+    if "rat" not in out and cursor < len(remaining):
+        rat_candidate = remaining[cursor]
+        rat_val = _safe_int(rat_candidate)
+        band_candidate = remaining[cursor + 1] if cursor + 1 < len(remaining) else None
+        band_text = str(band_candidate).strip() if band_candidate not in (None, "") else ""
+        band_ok = band_text != "" and (len(band_text) <= 3 or not _looks_like_timestamp(band_text))
+        if rat_val is not None and (rat_bit_on or band_ok or band_candidate is None):
+            out["rat"] = rat_val
+            out["rat_band"] = {"rat": rat_val, "band": band_text or None}
+            if band_text and band_ok and len(band_text) <= 3:
+                out["band"] = band_text
+            cursor += 1
+            if band_text and band_ok and len(band_text) <= 3:
+                cursor += 1
 
     out["remaining_blob"] = ",".join(value or "" for value in remaining[cursor:])
     return out
@@ -925,6 +969,48 @@ def parse_gteri(line: str, source: str = "RESP", device: Optional[str] = None) -
     enriched = _common_enrich(data, detected_source or source, protocol_version, count_hex)
     for meta in ("prefix", "is_buff", "raw_line", "raw_after_mask"):
         enriched.pop(meta, None)
+
+    # Compatibilidad con claves históricas
+    onewire_info = enriched.get("onewire")
+    if isinstance(onewire_info, dict):
+        count = onewire_info.get("count")
+        devices = onewire_info.get("devices")
+        if count is not None and "onewire_device_count" not in enriched:
+            enriched["onewire_device_count"] = count
+        if devices is not None and "onewire_devices" not in enriched:
+            enriched["onewire_devices"] = devices
+
+    ble_block = enriched.get("ble_block")
+    if isinstance(ble_block, dict):
+        accessories = ble_block.get("items")
+        if accessories is not None and "ble_accessories" not in enriched:
+            enriched["ble_accessories"] = accessories
+        count = ble_block.get("accessory_number")
+        if count is not None and "ble_count" not in enriched:
+            enriched["ble_count"] = count
+
+    mask_value = _mask_value(enriched.get("eri_mask"))
+    if mask_value is not None:
+        ble_mask_on = any(_mask_has_bit(mask_value, bit) for bit in (8, 12))
+        if ble_mask_on:
+            enriched.setdefault("ble_count", enriched.get("ble_count", 0))
+            enriched.setdefault("ble_accessories", enriched.get("ble_accessories", []))
+        else:
+            for key in ("ble_block", "ble_count", "ble_accessories"):
+                enriched.pop(key, None)
+
+        rat_mask_on = any(_mask_has_bit(mask_value, bit) for bit in (13, 15))
+        if not rat_mask_on:
+            rat_band = enriched.get("rat_band")
+            rat_band_has_data = isinstance(rat_band, dict) and rat_band.get("rat") is not None
+            if not rat_band_has_data:
+                for key in ("rat", "band", "rat_band"):
+                    if key in enriched and enriched[key] in (None, 0, {"rat": 0, "band": None}):
+                        enriched.pop(key)
+        else:
+            if "rat" not in enriched and "rat_band" not in enriched:
+                enriched["rat"] = None
+
     return enriched
 
 

@@ -23,7 +23,7 @@ schema:
         - { name: csq, type: int, min: 0, max: 255 }
         - { name: ber, type: int, min: 0, max: 99 }
         - { name: ext_power_supply, type: int, enum: [0,1] }
-        - { name: ext_power_voltage_mv, type: int, min: 0, max: 32000 }
+        - { name: ext_power_voltage_mv, type: int, min: 0, max: 32000, optional: true }
         - { name: network_type, type: int, enum: [0,1,2,3] }            # 0=unreg,1=EGPRS,2=WCDMA,3=LTE
         - { name: backup_batt_volt_v, type: float, min: 0.00, max: 5.00, precision: 2 }
         - { name: charging, type: int, enum: [0,1] }

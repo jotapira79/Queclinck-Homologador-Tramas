@@ -9,7 +9,15 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from queclink.ingestor_sqlite import SQLiteIngestor
-from queclink.parser import HeadInfo, identify_head, load_spec, model_from_imei, parse_line
+from queclink.parser import (
+    HeadInfo,
+    detect_model_from_identifiers,
+    identify_head,
+    load_spec,
+    model_from_imei,
+    parse_line,
+)
+from queclink.messages.gteri import _parse_line_to_record as _gteri_parse_line
 from queclink.parser import Spec
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,6 +51,39 @@ def _prepare_line_for_parsing(raw_line: str, head: HeadInfo) -> str:
         if raw_line.startswith(marker):
             return raw_line.replace(marker, f"{prefix},{suffix}", 1)
     return raw_line
+
+
+def parse_line_to_record(raw_line: str) -> Optional[dict[str, object]]:
+    record = _gteri_parse_line(raw_line)
+    if record is not None:
+        return record
+
+    head = identify_head(raw_line)
+    if not head:
+        return None
+
+    fields = _split_fields(raw_line)
+    if len(fields) < 3:
+        return None
+
+    imei = fields[2]
+    reported_device = fields[3] if len(fields) > 3 else None
+    model = detect_model_from_identifiers(imei, reported_device) or model_from_imei(imei)
+    if not model and reported_device:
+        model = reported_device.strip().upper()
+    if not model:
+        return None
+
+    try:
+        spec = load_spec(model, head.report)
+    except FileNotFoundError:
+        return None
+
+    normalized_line = _prepare_line_for_parsing(raw_line, head)
+    try:
+        return parse_line(normalized_line, head.source, model, head.report, spec=spec)
+    except Exception:
+        return None
 
 
 def _process_line(
@@ -89,6 +130,19 @@ def _process_line(
         )
         return False
 
+    aggregated_spec = None
+    if expected_report:
+        table_name = f"{expected_report.lower()}_records"
+        aggregated_spec = Spec(
+            model=spec.model,
+            message=spec.message,
+            table_name=table_name,
+            delimiter=spec.delimiter,
+            terminator=spec.terminator,
+            fields=spec.fields,
+            config=spec.config,
+        )
+
     try:
         record = parse_line(normalized_line, head.source, model, head.report, spec=spec)
     except Exception as exc:  # pragma: no cover - errores de parsing específicos
@@ -101,20 +155,29 @@ def _process_line(
                 "Línea %s: se aplicó parsing relajado para GTINF (%s)", line_number, exc
             )
         else:
+            if head.report.upper() == "GTERI":
+                record = _gteri_parse_line(raw_line)
+                if record is not None:
+                    ingestor.insert(model, head.report, record, spec=spec)
+                    if aggregated_spec is not None:
+                        ingestor.insert(model, head.report, record, spec=aggregated_spec)
+                    return True
             _LOGGER.warning("Línea %s: error al parsear la trama (%s)", line_number, exc)
             return False
 
     ingestor.insert(model, head.report, record, spec=spec)
+    if aggregated_spec is not None:
+        ingestor.insert(model, head.report, record, spec=aggregated_spec)
     return True
 
 
 def _relaxed_gtinf_parse(line: str, spec: Spec) -> Optional[dict[str, object]]:
     tokens = _split_fields(line)
-    if len(tokens) < len(spec.fields):
-        return None
     record: dict[str, object] = {}
-    for field, token in zip(spec.fields, tokens):
-        value: Optional[str] = token if token != "" else None
+    token_iter = iter(tokens)
+    for field in spec.fields:
+        raw = next(token_iter, None)
+        value: Optional[str] = raw if raw not in (None, "") else None
         record[field.name] = value
     record.setdefault("raw_line", line)
     return record

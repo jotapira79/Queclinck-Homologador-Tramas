@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from functools import lru_cache
 import logging
 import re
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from .utils.simple_yaml import load_file
 
@@ -23,6 +24,30 @@ _MODEL_PREFIXES = {
 
 
 _EQUALS_SENTINEL = object()
+
+
+def detect_model_from_identifiers(
+    imei: Optional[str],
+    reported_device: Optional[str],
+) -> Optional[str]:
+    """Infer the device model using the reported name or the IMEI prefix.
+
+    Historically some call sites relied on the parser module to expose this
+    helper.  The specialised ``gteri`` parser now imports it directly, so we
+    keep the behaviour here to avoid duplication.
+    """
+
+    if reported_device:
+        normalized = str(reported_device).strip().upper()
+        if normalized:
+            return normalized
+
+    if imei:
+        model = model_from_imei(imei)
+        if model:
+            return model.upper()
+
+    return None
 
 
 @dataclass(frozen=True)
@@ -215,6 +240,55 @@ def _ensure_sequence(value) -> Sequence[str]:
     return (str(value),)
 
 
+def _collect_when_conditions(
+    mapping, *, enabled: List[Condition], present: List[Condition]
+) -> None:
+    if not mapping or not isinstance(mapping, dict):
+        return
+
+    any_of = mapping.get("anyOf") or mapping.get("any_of")
+    if isinstance(any_of, (list, tuple)):
+        for item in any_of:
+            cond = Condition.from_mapping(item)
+            if cond:
+                present.append(cond)
+        return
+
+    all_of = mapping.get("allOf") or mapping.get("all_of")
+    if isinstance(all_of, (list, tuple)):
+        for item in all_of:
+            _collect_when_conditions(item, enabled=enabled, present=present)
+        return
+
+    cond = Condition.from_mapping(mapping)
+    if cond:
+        enabled.append(cond)
+
+
+def _iter_child_field_mappings(entry: dict) -> List[dict]:
+    nested: List[dict] = []
+
+    fields = entry.get("fields")
+    if isinstance(fields, list):
+        for child in fields:
+            if isinstance(child, dict):
+                nested.append(child)
+
+    properties = entry.get("properties")
+    if isinstance(properties, dict):
+        for name, value in properties.items():
+            if isinstance(value, dict):
+                child = dict(value)
+                child.setdefault("name", name)
+                nested.append(child)
+
+    items = entry.get("items")
+    if isinstance(items, dict):
+        nested.extend(_iter_child_field_mappings(items))
+
+    return nested
+
+
 def _build_field(entry: dict) -> FieldSpec:
     name = str(entry.get("name"))
     field_type = str(entry.get("type", "string"))
@@ -240,17 +314,24 @@ def _build_field(entry: dict) -> FieldSpec:
         if cond
     ]
 
-    when_entry = entry.get("when")
-    if isinstance(when_entry, dict):
-        when_condition = Condition.from_mapping(when_entry)
-        if when_condition:
-            if when_condition.any_of:
-                present_if_any_list.extend(when_condition.any_of)
-            else:
-                enabled_if_any_list.append(when_condition)
+    enabled_from_when: List[Condition] = []
+    present_from_when: List[Condition] = []
+    _collect_when_conditions(entry.get("when"), enabled=enabled_from_when, present=present_from_when)
+    if enabled_from_when:
+        enabled_if_any_list.extend(enabled_from_when)
+    if present_from_when:
+        present_if_any_list.extend(present_from_when)
 
     repeat = entry.get("repeat")
-    nested_fields = tuple(_build_field(child) for child in entry.get("fields", []) or [])
+    has_explicit_fields = bool(entry.get("fields"))
+    nested_entries = _iter_child_field_mappings(entry)
+    nested_fields_list: List[FieldSpec] = []
+    for child_entry in nested_entries:
+        child_field = _build_field(child_entry)
+        nested_fields_list.append(child_field)
+        if child_field.fields and not has_explicit_fields:
+            nested_fields_list.extend(child_field.fields)
+    nested_fields = tuple(nested_fields_list)
     return FieldSpec(
         name=name,
         type=field_type,
@@ -302,6 +383,17 @@ def _normalize_message_name(message: str) -> str:
     return f"GT{message}"
 
 
+def _compute_required_tokens(fields: Sequence[FieldSpec]) -> List[int]:
+    required: List[int] = [0] * len(fields)
+    remaining = 0
+    for index in range(len(fields) - 1, -1, -1):
+        required[index] = remaining
+        field = fields[index]
+        if not field.optional:
+            remaining += 1
+    return required
+
+
 def parse_line(
     line: str,
     source: Optional[str] = None,
@@ -328,22 +420,74 @@ def parse_line(
         spec = load_spec(model or "", message)
     model = model or spec.model
     tokens = _tokenize(line, delimiter=spec.delimiter, terminator=spec.terminator)
+    tokens = _normalize_header_tokens(tokens)
     stream = _TokenStream(tokens)
     context = _ParseContext(features=spec.config)
     result: dict[str, object] = {}
-    for field in spec.fields:
-        value = _parse_field(field, stream, context)
+    required_tokens = _compute_required_tokens(spec.fields)
+    for index, field in enumerate(spec.fields):
+        value = _parse_field(field, stream, context, required_tokens[index])
         if value is not _SKIP:
             result[field.name] = value
-    return result
+
+    protocol_version = result.get("full_protocol_version")
+    count_hex = result.get("count_hex")
+    enriched = _common_enrich(result, source, protocol_version, count_hex)
+
+    normalized_message = _normalize_message_name(message)
+    enriched["message"] = normalized_message
+    enriched["report"] = normalized_message
+    core_message = normalized_message[2:] if normalized_message.startswith("GT") else normalized_message
+    enriched.setdefault("message_core", core_message)
+
+    normalized_model = str(model).upper() if model else None
+    device_name = result.get("device_name")
+    if normalized_model:
+        enriched["device"] = normalized_model
+        enriched["model"] = normalized_model
+    elif device_name:
+        enriched["device"] = str(device_name).upper()
+
+    if device_name is not None:
+        enriched["device_name"] = device_name
+
+    send_time = result.get("send_time")
+    if send_time:
+        iso = _to_iso(send_time)
+        enriched["send_time_raw"] = send_time
+        if iso:
+            enriched["send_time_iso"] = iso
+            enriched["send_time"] = iso
+        else:
+            enriched["send_time_iso"] = send_time
+
+    last_fix = result.get("last_fix_utc")
+    if last_fix:
+        iso = _to_iso(last_fix)
+        if iso:
+            enriched["last_fix_utc_iso"] = iso
+
+    imei = result.get("imei")
+    if imei:
+        enriched["imei"] = str(imei)
+
+    return enriched
 
 
-def _parse_field(field: FieldSpec, stream: _TokenStream, context: _ParseContext):
+def _parse_field(
+    field: FieldSpec,
+    stream: _TokenStream,
+    context: _ParseContext,
+    required_remaining: int = 0,
+):
     if not _should_parse(field, context):
         return _SKIP
 
     if field.type == "group_repeated":
         return _parse_group(field, stream, context)
+
+    if field.optional and stream.remaining() <= required_remaining:
+        return _SKIP
 
     if stream.remaining() <= 0:
         if field.optional:
@@ -356,6 +500,9 @@ def _parse_field(field: FieldSpec, stream: _TokenStream, context: _ParseContext)
         return None
 
     if field.const is not None and raw != field.const:
+        if field.name == "device_name":
+            context.set(field.name, raw, raw)
+            return raw
         raise ValueError(f"El campo {field.name} no coincide con el valor esperado")
     if field.const_any:
         if not any(raw.startswith(prefix) for prefix in field.const_any):
@@ -371,12 +518,16 @@ def _parse_group(field: FieldSpec, stream: _TokenStream, context: _ParseContext)
     count = _to_int(context.get(repeat_field)) if repeat_field else 0
     if count is None or count < 0:
         count = 0
+    if stream.remaining() <= 0:
+        count = 0
+    elif count > stream.remaining():
+        count = 0
     items: List[dict] = []
     for _ in range(count):
         child_context = _ParseContext(parent=context)
         item: dict[str, object] = {}
         for nested in field.fields:
-            value = _parse_field(nested, stream, child_context)
+            value = _parse_field(nested, stream, child_context, 0)
             if value is not _SKIP:
                 item[nested.name] = value
         items.append(item)
@@ -499,14 +650,117 @@ def _tokenize(line: str, delimiter: str = ",", terminator: str = "$") -> List[st
     return [part.strip() for part in payload.split(delimiter)]
 
 
+def _split(line: str) -> List[str]:
+    """Backward compatible alias used by legacy parsers."""
+
+    return _tokenize(line)
+
+
+def _normalize_header_tokens(tokens: List[str]) -> List[str]:
+    if not tokens:
+        return tokens
+
+    first = tokens[0]
+    match = _HEADER_RE.match(first)
+    if not match:
+        return tokens
+
+    source, report = match.groups()
+    if len(report) <= 2:
+        return tokens
+
+    message = report[2:]
+    normalized_header = f"+{source}:GT"
+    normalized = list(tokens)
+    normalized[0] = normalized_header
+
+    if len(normalized) == 1:
+        normalized.append(message)
+    else:
+        if normalized[1] != message:
+            normalized.insert(1, message)
+
+    return normalized
+
+
+def _to_iso(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    # Already ISO‑8601
+    if "T" in text and text.endswith("Z"):
+        return text
+
+    digits = re.sub(r"[^0-9]", "", text)
+    if len(digits) >= 14:
+        try:
+            dt = datetime.strptime(digits[:14], "%Y%m%d%H%M%S")
+        except ValueError:
+            return None
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    if len(digits) == 12:
+        try:
+            dt = datetime.strptime(digits, "%Y%m%d%H%M")
+        except ValueError:
+            return None
+        return dt.strftime("%Y-%m-%dT%H:%M:00Z")
+
+    return None
+
+
+def _common_enrich(
+    data: Dict[str, Any],
+    source: Optional[str],
+    protocol_version: Optional[str],
+    count_hex: Optional[str],
+) -> Dict[str, Any]:
+    enriched = dict(data)
+
+    if source:
+        normalized_source = source.strip().upper()
+        enriched["source"] = normalized_source
+        if "is_buff" not in enriched:
+            enriched["is_buff"] = 1 if normalized_source == "BUFF" else 0
+
+    if protocol_version and not enriched.get("protocol_version"):
+        enriched["protocol_version"] = protocol_version
+
+    if count_hex:
+        normalized_count = str(count_hex).strip()
+        if normalized_count:
+            enriched["count_hex"] = normalized_count.upper()
+
+    header = enriched.get("header") or enriched.get("prefix")
+    if isinstance(header, str) and header:
+        enriched.setdefault("report", header.split(":", 1)[-1])
+
+    return enriched
+
+
 __all__ = [
     "Condition",
     "FieldSpec",
     "Spec",
     "HeadInfo",
+    "_common_enrich",
+    "_split",
+    "_to_iso",
+    "detect_model_from_identifiers",
     "identify_head",
     "model_from_imei",
     "load_spec",
     "parse_line",
+    "parse_gteri",
 ]
+
+
+def parse_gteri(line: str, source: str = "RESP", device: Optional[str] = None) -> Dict[str, Any]:
+    from .messages import gteri as _gteri
+
+    return _gteri.parse_gteri(line, source=source, device=device)
 
