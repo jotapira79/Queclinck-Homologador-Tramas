@@ -261,80 +261,6 @@ def _parse_rf433_block(tokens: List[Optional[str]], cursor: int) -> Tuple[Option
     return {"accessory_number": accessory_number, "accessories": accessories}, cursor
 
 
-# ---------------------- NUEVOS HELPERS (ERI MASK: 1-Wire y Fuel Sensor) ----------------------
-
-def _parse_onewire_block(tokens: List[Optional[str]], cursor: int) -> Tuple[Optional[Dict[str, Any]], int]:
-    """
-    1-Wire Data (Bit 1):
-    Estructura genérica tolerante:
-      count; por cada dispositivo: id, type, data
-    """
-    start = cursor
-    if cursor >= len(tokens):
-        return None, cursor
-    count = _safe_int(tokens[cursor])
-    cursor += 1
-    if count is None or count < 0:
-        return None, start
-
-    devices: List[Dict[str, Any]] = []
-    for _ in range(count):
-        dev_id = (tokens[cursor] or "").strip() if cursor < len(tokens) else None
-        cursor += 1 if cursor < len(tokens) else 0
-        dev_type = _safe_int(tokens[cursor]) if cursor < len(tokens) else None
-        cursor += 1 if cursor < len(tokens) else 0
-        dev_data = (tokens[cursor] or "").strip() if cursor < len(tokens) else None
-        cursor += 1 if cursor < len(tokens) else 0
-        devices.append({"id": dev_id or None, "type": dev_type, "data": dev_data or None})
-
-    return {"onewire": {"count": count, "devices": devices}}, cursor
-
-
-def _parse_fuel_sensor_block(tokens: List[Optional[str]], cursor: int, eri_mask_value: int) -> Tuple[Optional[Dict[str, Any]], int]:
-    """
-    Fuel Sensor Data (Bits 3/4 implican presencia del bloque):
-      count; por sensor: type; (percentage si bit3); (volume si bit4); (fuel_temp si bit10 y type en {2,6})
-    """
-    start = cursor
-    if cursor >= len(tokens):
-        return None, cursor
-    count = _safe_int(tokens[cursor])
-    cursor += 1
-    if count is None or count < 0:
-        return None, start
-
-    sensors: List[Dict[str, Any]] = []
-    for _ in range(count):
-        s: Dict[str, Any] = {"type": None, "percentage": None, "volume": None, "fuel_temp_c": None}
-        if cursor < len(tokens):
-            s["type"] = _safe_int(tokens[cursor])
-            cursor += 1
-        # percentage si bit3
-        if (eri_mask_value & (1 << 3)) != 0 and cursor < len(tokens):
-            tok = tokens[cursor]
-            if tok not in (None, ""):
-                s["percentage"] = _safe_float(tok)
-            cursor += 1 if cursor < len(tokens) else 0
-        # volume si bit4
-        if (eri_mask_value & (1 << 4)) != 0 and cursor < len(tokens):
-            tok = tokens[cursor]
-            if tok not in (None, ""):
-                s["volume"] = _safe_float(tok)
-            cursor += 1 if cursor < len(tokens) else 0
-        # temperatura de combustible si bit10 y tipo en {2,6}
-        if (eri_mask_value & (1 << 10)) != 0 and (s.get("type") in (2, 6)) and cursor < len(tokens):
-            tok = tokens[cursor]
-            if tok not in (None, ""):
-                s["fuel_temp_c"] = _safe_float(tok)
-            cursor += 1 if cursor < len(tokens) else 0
-        sensors.append(s)
-
-    return {"fuel_sensor": {"count": count, "sensors": sensors}}, cursor
-
-
-# ---------------------------------------------------------------------------------------------
-
-
 def _parse_model_specific(device: str, fields: List[str], start_idx: int) -> Dict[str, Any]:
     normalized = (device or "").strip().upper()
     if normalized == "GV58LAU":
@@ -541,12 +467,9 @@ def _parse_model_specific_default(fields: List[str], start_idx: int) -> Dict[str
         cursor += 1
 
     skip_empty_values()
-
-    # -------- ERI MASK: bloques opcionales controlados por bits --------
-    # Bit 0: Digital Fuel Sensor (DFS) – tu bloque heredado
-    if eri_mask_value is not None:
+    if eri_mask_value is not None and cursor < len(remaining):
         dfs_items: List[str] = []
-        if (eri_mask_value & (1 << 0)) != 0:
+        if (eri_mask_value & 0x01) != 0:
             while cursor < len(remaining):
                 token = remaining[cursor]
                 if token is None or token.strip() == "":
@@ -570,76 +493,42 @@ def _parse_model_specific_default(fields: List[str], start_idx: int) -> Dict[str
                 )
                 out["digital_fuel_sensor_data_items"] = dfs_items
 
-    skip_empty_values()
-
-    # Bit 1: 1-Wire Data
-    if (eri_mask_value is not None) and ((eri_mask_value & (1 << 1)) != 0) and cursor < len(remaining):
-        onewire_block, cursor_candidate = _parse_onewire_block(remaining, cursor)
-        if onewire_block is not None:
-            out.update(onewire_block)
-            cursor = cursor_candidate
         skip_empty_values()
 
-    # Bits 3/4: Fuel Sensor Data (porcentaje/volumen)
-    if (eri_mask_value is not None) and (((eri_mask_value & (1 << 3)) != 0) or ((eri_mask_value & (1 << 4)) != 0)) and cursor < len(remaining):
-        fuel_block, cursor_candidate = _parse_fuel_sensor_block(remaining, cursor, eri_mask_value)
-        if fuel_block is not None:
-            out.update(fuel_block)
-            cursor = cursor_candidate
-        skip_empty_values()
-
-    # RF433 (Bit 7) – si el bit está activo procesa; si no, solo si hay etiqueta explícita
     rf433_block: Optional[Dict[str, Any]] = None
     if cursor < len(remaining):
         peek = (remaining[cursor] or "").strip().upper()
-        rf433_bit_on = (eri_mask_value is not None) and ((eri_mask_value & (1 << 7)) != 0)
         if peek in {"RF433", "RF433B"}:
             cursor += 1
             rf433_block, cursor = _parse_rf433_block(remaining, cursor)
             skip_empty_values()
-        elif rf433_bit_on:
-            count_try = _safe_int(remaining[cursor])
-            if count_try is not None and 0 <= count_try <= 10:
-                rf433_block, cursor_candidate = _parse_rf433_block(remaining, cursor)
-                if rf433_block:
-                    cursor = cursor_candidate
-            skip_empty_values()
-    if rf433_block:
-        out["rf433_block"] = rf433_block
 
-    # BLE (Bit 8) – si el bit está activo procesa; si no, solo si hay etiqueta explícita
     ble_block: Optional[Dict[str, Any]] = None
     if cursor < len(remaining):
         peek = (remaining[cursor] or "").strip().upper()
-        ble_bit_on = (eri_mask_value is not None) and ((eri_mask_value & (1 << 8)) != 0)
         if peek == "BLE":
             cursor += 1
-            ble_block, cursor = _parse_ble_block(remaining, cursor)
-            skip_empty_values()
-        elif ble_bit_on:
-            ble_block, cursor_candidate = _parse_ble_block(remaining, cursor)
-            if ble_block:
-                cursor = cursor_candidate
-            skip_empty_values()
+        ble_block, cursor = _parse_ble_block(remaining, cursor)
+        skip_empty_values()
+
+    if rf433_block:
+        out["rf433_block"] = rf433_block
     if ble_block:
         out["ble_block"] = ble_block
         out["ble_count"] = ble_block.get("accessory_number")
 
-    # RAT/Band (Bit 15) – si el bit está activo procesa; compat: si no está y pinta a RAT, se deja como antes
     skip_empty_values()
     if cursor < len(remaining):
-        rat_bit_on = (eri_mask_value is not None) and ((eri_mask_value & (1 << 15)) != 0)
         rat_raw = remaining[cursor]
-        rat_val = _safe_int(rat_raw)
-        # Condición: bit activo O heurística de compat (un entero razonable que parezca RAT)
-        if rat_val is not None and (rat_bit_on or True):
+        rat_value = _safe_int(rat_raw)
+        if rat_value is not None:
             cursor += 1
             band_raw = remaining[cursor] if cursor < len(remaining) else None
             band_value = band_raw if band_raw not in (None, "") else None
             if band_raw is not None:
                 cursor += 1
-            out["rat_band"] = {"rat": rat_val, "band": band_value}
-            out["rat"] = rat_val
+            out["rat_band"] = {"rat": rat_value, "band": band_value}
+            out["rat"] = rat_value
             if band_value is not None:
                 out["band"] = band_value
 
@@ -756,12 +645,6 @@ def _parse_model_specific_gv58(fields: List[str], start_idx: int) -> Dict[str, A
         minimal = idx + 1 + count * 5
         return len(remaining) >= minimal
 
-    # CAN (ejemplo según ERI; GV58 puede traer CAN si el bit aplica)
-    if eri_mask_value is not None and (eri_mask_value & (1 << 2)):
-        # Si hubiese un token CAN dedicado, se podría capturar aquí (placeholder)
-        pass
-
-    # Intento de reservar token previo al BLE si no parece BLE aún
     if not looks_like_ble_start(cursor):
         res3 = peek()
         if res3 is not None:
@@ -771,24 +654,28 @@ def _parse_model_specific_gv58(fields: List[str], start_idx: int) -> Dict[str, A
     else:
         out.setdefault("reserved_3", None)
 
-    # BLE (Bit 8) condicionado: si el bit está activo, intentar; o si la heurística BLE lo sugiere
+    if eri_mask_value is not None and (eri_mask_value & 0x04):
+        if cursor < len(remaining) and not looks_like_ble_start(cursor):
+            can_token = advance()
+            if can_token not in (None, ""):
+                out["can_data"] = can_token
+        skip_empty_values()
+
     ble_block: Optional[Dict[str, Any]] = None
-    ble_bit_on = eri_mask_value is not None and ((eri_mask_value & (1 << 8)) != 0)
-    if looks_like_ble_start(cursor) or ble_bit_on:
+    ble_start = cursor
+    if looks_like_ble_start(cursor):
         ble_block, cursor = _parse_ble_block(remaining, cursor)
     if ble_block:
         out["ble_block"] = ble_block
         out["ble_count"] = ble_block.get("accessory_number")
     else:
-        # si falló, retrocede al inicio BLE que habíamos detectado
-        pass
+        cursor = ble_start
 
     skip_empty_values()
     rat_token = peek()
-    rat_bit_on = eri_mask_value is not None and ((eri_mask_value & (1 << 15)) != 0)
     if rat_token not in (None, ""):
         rat_val = _safe_int(rat_token)
-        if rat_val is not None and (rat_bit_on or True):  # compatibilidad
+        if rat_val is not None:
             advance()
             band_token = peek()
             band_val: Optional[str] = None
