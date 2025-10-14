@@ -54,44 +54,43 @@ schema:
     # CUERPO VARIABLE (Opcional / controla la longitud total)
     # =======================================================
         - name: body_variable
-      fields:
-
-        # --- Sub-bloque controlado por pos_append_mask ---
-        - name: satellites
-          type: int
-          min: 0
-          max: 72
-          present_if: { mask_field: pos_append_mask, bit: 0 }
+        fields:
+         # --- Sub-bloque controlado por pos_append_mask ---
+         - name: satellites
+           type: int
+           min: 0
+           max: 72
+           present_if: { mask_field: pos_append_mask, bit: 0 }
         
-        - name: gnss_trigger_type
-          type: int
-          min: 0
-          max: 4
-          present_if_any:
-            - { mask_field: pos_append_mask, bit: 1 }
-            - { mask_field: pos_append_mask, bit: 2 }
-            - { mask_field: pos_append_mask, bit: 3 }
+         - name: gnss_trigger_type
+           type: int
+           min: 0
+           max: 4
+           present_if_any:
+             - { mask_field: pos_append_mask, bit: 1 }
+             - { mask_field: pos_append_mask, bit: 2 }
+             - { mask_field: pos_append_mask, bit: 3 }
 
-        - name: hdop
-          type: float
-          min: 0.00
-          max: 99.99
-          precision: 2
-          present_if: { mask_field: pos_append_mask, bit: 1 }
+         - name: hdop
+           type: float
+           min: 0.00
+           max: 99.99
+           precision: 2
+           present_if: { mask_field: pos_append_mask, bit: 1 }
 
-        - name: vdop
-          type: float
-          min: 0.00
-          max: 99.99
-          precision: 2
-          present_if: { mask_field: pos_append_mask, bit: 2 }
+         - name: vdop
+           type: float
+           min: 0.00
+           max: 99.99
+           precision: 2
+           present_if: { mask_field: pos_append_mask, bit: 2 }
 
-        - name: pdop
-          type: float
-          min: 0.00
-          max: 99.99
-          precision: 2
-          present_if: { mask_field: pos_append_mask, bit: 3 }
+         - name: pdop
+           type: float
+           min: 0.00
+           max: 99.99
+           precision: 2
+           present_if: { mask_field: pos_append_mask, bit: 3 }
 
 
         # --- Contadores / estado vehículo (fijo) ---
