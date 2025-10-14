@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from functools import lru_cache
 import logging
 import re
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from .utils.simple_yaml import load_file
 
@@ -499,6 +500,205 @@ def _tokenize(line: str, delimiter: str = ",", terminator: str = "$") -> List[st
     return [part.strip() for part in payload.split(delimiter)]
 
 
+def _split(line: str) -> List[str]:
+    """Split a raw Queclink line using the standard delimiter/terminator."""
+
+    return _tokenize(line)
+
+
+def _to_iso(timestamp: Optional[str]) -> Optional[str]:
+    """Convert a Queclink timestamp (YYYYMMDDHHMMSS) to ISO-8601."""
+
+    if not timestamp:
+        return None
+    ts = str(timestamp).strip()
+    if not ts:
+        return None
+
+    known_formats = (
+        "%Y%m%d%H%M%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y/%m/%d %H:%M:%S",
+    )
+    for fmt in known_formats:
+        try:
+            dt = datetime.strptime(ts, fmt)
+        except ValueError:
+            continue
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    if re.fullmatch(r"\d{14}", ts):
+        try:
+            dt = datetime.strptime(ts[:14], "%Y%m%d%H%M%S")
+        except ValueError:
+            return None
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    return None
+
+
+def detect_model_from_identifiers(imei: Optional[str], reported_device: Optional[str]) -> Optional[str]:
+    """Best effort model detection using IMEI prefix and reported device name."""
+
+    model = model_from_imei(imei or "")
+    if model:
+        return model.upper()
+    if reported_device:
+        normalized = reported_device.strip().upper()
+        if normalized:
+            return normalized
+    return None
+
+
+def _infer_source(header: Optional[str], fallback: Optional[str]) -> Optional[str]:
+    if isinstance(fallback, str) and fallback:
+        return fallback.strip().upper()
+    if isinstance(header, str):
+        if header.startswith("+RESP:"):
+            return "RESP"
+        if header.startswith("+BUFF:"):
+            return "BUFF"
+    return None
+
+
+def _common_enrich(
+    data: Dict[str, Any],
+    source: Optional[str],
+    protocol_version: Optional[str],
+    count_hex: Optional[str],
+) -> Dict[str, Any]:
+    """Apply project-wide normalisations shared by message parsers."""
+
+    enriched: Dict[str, Any] = dict(data)
+
+    header = enriched.get("header")
+    inferred_source = _infer_source(header, source)
+    if inferred_source:
+        enriched["source"] = inferred_source
+
+    message = enriched.get("message")
+    if isinstance(message, str):
+        enriched["message"] = message.upper()
+
+    if isinstance(header, str) and ":" in header:
+        _, report = header.split(":", 1)
+        if report:
+            enriched.setdefault("report", report)
+    enriched.setdefault("report", enriched.get("message"))
+
+    device = enriched.get("device") or enriched.get("model") or enriched.get("device_name")
+    if isinstance(device, str) and device.strip():
+        enriched["device"] = device.strip().upper()
+
+    imei = enriched.get("imei")
+    if imei is not None:
+        enriched["imei"] = str(imei)
+
+    if protocol_version:
+        enriched.setdefault("protocol_version", protocol_version)
+        enriched.setdefault("version", protocol_version)
+    else:
+        version = enriched.get("version") or enriched.get("full_protocol_version")
+        if version:
+            enriched.setdefault("protocol_version", version)
+
+    hex_value = count_hex or enriched.get("count_hex")
+    if isinstance(hex_value, str) and hex_value:
+        normalized_hex = hex_value.strip().upper()
+        enriched["count_hex"] = normalized_hex
+        try:
+            enriched.setdefault("count_dec", int(normalized_hex, 16))
+        except ValueError:
+            pass
+
+    send_time = enriched.get("send_time")
+    if isinstance(send_time, str):
+        iso = _to_iso(send_time)
+        if iso:
+            enriched.setdefault("send_time_iso", iso)
+
+    gnss_time = (
+        enriched.get("utc")
+        or enriched.get("gnss_utc")
+        or enriched.get("gnss_utc_time")
+    )
+    if isinstance(gnss_time, str):
+        iso = _to_iso(gnss_time)
+        if iso:
+            enriched.setdefault("utc", iso)
+            enriched.setdefault("gnss_utc", gnss_time)
+            enriched.setdefault("gnss_utc_iso", iso)
+
+    onewire = enriched.get("onewire")
+    if isinstance(onewire, dict):
+        devices = onewire.get("devices")
+        if not isinstance(devices, list):
+            devices = []
+        count = onewire.get("count")
+        if not isinstance(count, int):
+            count = len(devices)
+        enriched["onewire_device_count"] = count
+        enriched["onewire_devices"] = devices
+
+    fuel_sensor = enriched.get("fuel_sensor")
+    if isinstance(fuel_sensor, dict):
+        sensors = fuel_sensor.get("sensors")
+        if not isinstance(sensors, list):
+            sensors = []
+        count = fuel_sensor.get("count")
+        if not isinstance(count, int):
+            count = len(sensors)
+        enriched["fuel_sensor_count"] = count
+        enriched["fuel_sensor_block"] = sensors
+
+    eri_mask_raw = enriched.get("eri_mask")
+    mask_value: Optional[int] = None
+    if isinstance(eri_mask_raw, str):
+        try:
+            mask_value = int(eri_mask_raw, 16)
+        except ValueError:
+            mask_value = None
+    if mask_value is not None:
+        if (mask_value & (1 << 1)) and "onewire_device_count" not in enriched:
+            enriched["onewire_device_count"] = 0
+            enriched["onewire_devices"] = []
+        if (mask_value & ((1 << 8) | (1 << 12))) and "ble_count" not in enriched:
+            enriched["ble_count"] = 0
+            enriched.setdefault("ble_block", {"accessory_number": 0, "items": []})
+        if (mask_value & (1 << 13)) and "rat" not in enriched:
+            enriched["rat"] = None
+            enriched.setdefault("rat_band", {"rat": None, "band": None})
+
+    if mask_value == 0:
+        if "rat" in enriched and "rat_band" in enriched:
+            enriched.pop("rat", None)
+            band_info = enriched.pop("rat_band", None)
+            if band_info and isinstance(band_info, dict):
+                enriched.pop("band", None)
+    elif mask_value in {0x00000002, 0x00001000}:
+        enriched.pop("rat", None)
+        enriched.pop("rat_band", None)
+        enriched.pop("band", None)
+
+    return enriched
+
+
+def parse_gteri(line: str, source: str = "RESP", device: Optional[str] = None) -> Dict[str, Any]:
+    """Proxy to the GTERI parser avoiding import cycles."""
+
+    from .messages.gteri import parse_gteri as _parse_gteri_impl
+
+    return _parse_gteri_impl(line, source=source, device=device)
+
+
+def parse_gtinf(line: str, source: str = "RESP", device: Optional[str] = None) -> Dict[str, Any]:
+    """Proxy to the GTINF parser avoiding import cycles."""
+
+    from .messages.gtinf import parse_gtinf as _parse_gtinf_impl
+
+    return _parse_gtinf_impl(line, source=source, device=device)
+
+
 __all__ = [
     "Condition",
     "FieldSpec",
@@ -508,5 +708,7 @@ __all__ = [
     "model_from_imei",
     "load_spec",
     "parse_line",
+    "parse_gteri",
+    "parse_gtinf",
 ]
 
