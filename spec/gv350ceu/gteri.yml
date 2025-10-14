@@ -132,23 +132,23 @@ schema:
             - { name: dfs_temp_c, type: float, optional: true }
             - { name: dfs_raw_hex, type: hex, max_length: 64, optional: true }
 
-        # ---- 1-Wire Data (iButton / Temp DS18B20) ----
-        - name: one_wire_count
+        # ---- 1-Wire Data (iButton / Temp) ----
+         - name: one_wire_device_number
           type: int
           min: 0
-          max: 8
+          max: 19
           optional: true
+          present_if: { mask_field: "eri_mask", bit: 1 }   # se muestra solo si el ERI Mask lo habilita
 
         - name: one_wire_devices
-          type: group_repeated
-          repeat: one_wire_count
-          optional: true
-          fields:
-            - { name: ow_type, type: int, min: 0, max: 255 }
-            - { name: ow_address_hex, type: hex, length_variant: [16], optional: true }
-            - { name: ow_temp_c, type: float, optional: true }
-            - { name: ow_ibutton_id, type: hex, length_variant: [16], optional: true }
-            - { name: ow_raw_hex, type: hex, max_length: 64, optional: true }
+         type: group_repeated
+         repeat: one_wire_device_number
+         optional: true
+         fields:
+          - { name: one_wire_device_id,   type: hex,   length_variant: [16] }
+          - { name: one_wire_device_type, type: int,   min: 1, max: 99 }   # 1 = temp sensor (DS18B20)
+          - { name: one_wire_device_data, type: hex,   max_length: 40 }    # crudo; para tipo 1 es complemento a dos
+
 
         # ---- CAN Data (FMS/J1939/OBD-II vía adaptador externo) ----
         - name: can_append_mask
