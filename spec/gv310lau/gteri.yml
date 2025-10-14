@@ -97,19 +97,23 @@ schema:
           when: { mask: eri_mask, bit: 0 }
 
         # Bit 1: 1-Wire Data
-        - name: one_wire_block
-          type: object
-          when: { mask: eri_mask, bit: 1 }
-          properties:
-            device_number: { type: int, min: 0, max: 19 }
-            devices:
-              type: array
-              items:
-                type: object
-                properties:
-                  id: { type: hex, length: 16 }
-                  type: { type: int, enum: [1], note: "1 => sensor de temperatura (DS18B20)" }
-                  data_raw: { type: hex, max_length: 4, note: "two's complement 16-bit; tempC = decimal * 0.0625" }
+        - name: one_wire_device_number
+          type: int
+          min: 0
+          max: 19
+          optional: true
+          present_if: { mask_field: eri_mask, bit: 1 }
+
+        - name: one_wire_devices
+          type: group_repeated
+          repeat: one_wire_device_number
+          optional: true
+          enabled_if_any:
+            - { mask_field: eri_mask, bit: 1 }
+          fields:
+            - { name: one_wire_device_id,   type: hex,   length_variant: [16] }
+            - { name: one_wire_device_type, type: int,   enum: [1], optional: true, note: "1 => sensor de temperatura (DS18B20)" }
+            - { name: one_wire_device_data, type: hex,   max_length: 40, optional: true, note: "Two's complement 16-bit" }
 
         # Bit 2: CAN Data (ASCII)
         - name: can_data
@@ -348,7 +352,10 @@ masks:
   eri_mask:
     bits:
       0:  { block: digital_fuel_sensor_data }
-      1:  { block: one_wire_block }
+      1:
+        fields:
+          - one_wire_device_number
+          - one_wire_devices
       2:  { block: can_data }
       3:  { note: "Enable Fuel Sensor Data: Percentage", block: fuel_sensor_block }
       4:  { note: "Enable Fuel Sensor Data: Volume", block: fuel_sensor_block }

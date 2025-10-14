@@ -344,7 +344,10 @@ def _parse_field(field: FieldSpec, stream: _TokenStream, context: _ParseContext)
         return _SKIP
 
     if field.type == "group_repeated":
-        return _parse_group(field, stream, context)
+        count = _repeat_count(field, context)
+        if (count is None or count <= 0) and field.optional:
+            return _SKIP
+        return _parse_group(field, stream, context, count=count)
 
     if stream.remaining() <= 0:
         if field.optional:
@@ -367,9 +370,15 @@ def _parse_field(field: FieldSpec, stream: _TokenStream, context: _ParseContext)
     return value
 
 
-def _parse_group(field: FieldSpec, stream: _TokenStream, context: _ParseContext):
-    repeat_field = field.repeat
-    count = _to_int(context.get(repeat_field)) if repeat_field else 0
+def _parse_group(
+    field: FieldSpec,
+    stream: _TokenStream,
+    context: _ParseContext,
+    *,
+    count: Optional[int] = None,
+):
+    if count is None:
+        count = _repeat_count(field, context)
     if count is None or count < 0:
         count = 0
     items: List[dict] = []
@@ -383,6 +392,13 @@ def _parse_group(field: FieldSpec, stream: _TokenStream, context: _ParseContext)
         items.append(item)
     context.set(field.name, items, str(len(items)) if items else None)
     return items
+
+
+def _repeat_count(field: FieldSpec, context: _ParseContext) -> Optional[int]:
+    repeat_field = field.repeat
+    if not repeat_field:
+        return None
+    return _to_int(context.get(repeat_field))
 
 
 def _should_parse(field: FieldSpec, context: _ParseContext) -> bool:
