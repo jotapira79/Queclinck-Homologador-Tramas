@@ -92,6 +92,12 @@ RAW_PDOP_ONLY = (
     "111,222,333,90,220100,0,20251013124750,0001$"
 )
 
+RAW_PDOP_TRIO = (
+    "+RESP:GTERI,6E0C03,868589060796441,GV310LAU,00000002,14095,54,1,1,83.4,61,1120.9,"
+    "-69.777507,-23.288856,20251013124747,0730,0002,00C9,08000620,09,12,0.88,1.54,1.77,"
+    "23838.9,0000402:16:03,,,,100,220100,0,0,20251013124747,06CC$"
+)
+
 RAW_UART_DUP_ZERO = (
     "+RESP:GTERI,6E1203,864696060004173,GV310LAU,00000100,,10,1,1,0.0,0,115.8,"
     "117.129356,31.839248,20230808061540,0460,0001,DF5C,05FE6667,03,15,,4.0,"
@@ -237,10 +243,25 @@ def test_pdop_only_mask_consumes_placeholders():
     d = parse_gteri(RAW_PDOP_ONLY)
 
     assert d.get("sats_in_use") == 12
+    assert d.get("hdop") is None
     assert d.get("pdop") == pytest.approx(0.88)
     assert d.get("hour_meter") == "0000123:45:00"
     assert d.get("mileage_km") == pytest.approx(123.45)
     assert d.get("analog_in_1") == 111
+    assert d.get("device_status") == "220100"
+
+
+def test_gv310lau_mask09_reports_all_dops():
+    d = parse_gteri(RAW_PDOP_TRIO)
+
+    assert d.get("sats_in_use") == 12
+    assert d.get("hdop") == pytest.approx(0.88)
+    assert d.get("vdop") == pytest.approx(1.54)
+    assert d.get("pdop") == pytest.approx(1.77)
+    assert d.get("mileage_km") == pytest.approx(23838.9)
+    assert d.get("hour_meter") == "0000402:16:03"
+    assert d.get("analog_in_1") is None
+    assert d.get("backup_battery_pct") == 100
     assert d.get("device_status") == "220100"
 
 

@@ -368,7 +368,12 @@ def _parse_model_specific_default(fields: List[str], start_idx: int) -> Dict[str
 
     dop_keys = ["hdop", "vdop", "pdop"]
     dop_values: List[Tuple[int, Optional[float]]] = []
-    dop_pattern = r"\d{1,2}(?:\.\d{1,2})?"
+    # Algunos firmwares (por ejemplo GV310LAU) envían valores de DOP con más de dos
+    # decimales aun cuando los bits correspondientes de la máscara no estén activos.
+    # Para no perder esos campos —lo que desplazaría el resto de columnas— aceptamos
+    # cualquier cantidad de decimales en el rango documentado (0-99).  Esta lógica
+    # se complementa con pruebas de regresión específicas para GV310LAU.
+    dop_pattern = r"\d{1,2}(?:\.\d+)?"
     for idx in range(3):
         if cursor >= len(remaining):
             break
@@ -905,7 +910,20 @@ def parse_gteri(line: str, source: str = "RESP", device: Optional[str] = None) -
         block = data.get("ble_block")
         if isinstance(block, dict):
             data["ble_count"] = block.get("accessory_number")
-    if data.get("hdop") is None:
+    mask_raw = data.get("position_append_mask") or data.get("pos_append_mask")
+    mask_value: Optional[int] = None
+    if mask_raw not in (None, ""):
+        try:
+            mask_value = int(str(mask_raw), 16)
+        except ValueError:
+            try:
+                mask_value = int(str(mask_raw))
+            except ValueError:
+                mask_value = None
+
+    mask_includes_hdop = mask_value is None or (mask_value & 0x02) != 0
+
+    if mask_includes_hdop and data.get("hdop") is None:
         for candidate_key in ("vdop", "pdop"):
             value = data.get(candidate_key)
             if value is not None:
