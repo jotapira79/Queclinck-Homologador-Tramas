@@ -68,7 +68,16 @@ schema:
           max: 99.99
           precision: 2
           present_if: { mask_field: pos_append_mask, bit: 3 }
-        - { name: gnss_trigger_type, type: int, min: 0, max: 9, optional: true, description: "Trigger GNSS reportado tras los DOP." }
+        - name: gnss_trigger_type
+          type: int
+          min: 0
+          max: 9
+          optional: true
+          description: "Trigger GNSS reportado tras los DOP."
+          present_if_any:
+            - { field_present: hdop }
+            - { field_present: vdop }
+            - { field_present: pdop }
 
         # --- Vehicle counters / status ---
         - { name: mileage_km, type: float, min: 0.0, max: 4294967.0, precision: 1 }
