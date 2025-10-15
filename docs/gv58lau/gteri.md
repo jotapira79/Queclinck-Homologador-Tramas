@@ -90,7 +90,7 @@ El valor viene después de `cell_id`.
 | `hdop` | float | 0.00–99.99 (opcional). |
 | `vdop` | float | 0.00–99.99 (opcional). |
 | `pdop` | float | 0.00–99.99 (opcional). |
-| `gnss_trigger_type` | int | Tipo de trigger GNSS (firmware dependiente). |
+| `gnss_trigger_type` | int | Tipo de trigger GNSS (firmware dependiente, solo presente cuando se reportan valores DOP). |
 
 ---
 
