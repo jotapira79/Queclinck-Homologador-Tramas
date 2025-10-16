@@ -26,6 +26,16 @@ GTFRI_GV310LAU_LINES = [
 ]
 
 
+GTFRI_GV350CEU_LINES = [
+    "+RESP:GTFRI,740904,862524060867948,GV350CEU,,10,1,1,89.5,169,672.9,"\
+    "-70.292914,-23.949947,20251016184033,0730,0001,0836,002BEE06,01,12,"\
+    "775824.1,0000439:30:29,,,,100,221102,,,,20251016184035,AA3C$",
+    "+BUFF:GTFRI,740904,862524060867948,GV350CEU,,10,1,1,89.6,168,690.2,"\
+    "-70.291068,-23.958760,20251016184113,0730,0001,0836,002BEE06,01,12,"\
+    "775825.1,0000439:31:11,,,,100,221102,,,,20251016184115,AA41$",
+]
+
+
 def test_ingest_lines_creates_gtfri_gv58lau_table_with_spec_columns():
     conn = ensure_db(":memory:")
 
@@ -84,4 +94,35 @@ def test_ingest_lines_creates_gtfri_gv310lau_table_with_spec_columns():
     assert rows == [
         ("868589060693259", None, None, None, None, 100, "$"),
         ("868589060367029", 11, 0.88, 1.29, 1.56, 100, "$"),
+    ]
+
+
+def test_ingest_lines_creates_gtfri_gv350ceu_table_with_spec_columns():
+    conn = ensure_db(":memory:")
+
+    inserted = ingest_lines(conn, GTFRI_GV350CEU_LINES, message="GTFRI")
+    assert inserted == len(GTFRI_GV350CEU_LINES)
+
+    spec = resolve_spec("GTFRI", "GV350CEU")
+    table_name = spec["spec"].table_name
+
+    cursor = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,),
+    )
+    assert cursor.fetchone() is not None
+
+    info = conn.execute(f'PRAGMA table_info("{table_name}")').fetchall()
+    columns = [row[1] for row in info]
+    expected_columns = [name for name, _ in spec_to_sql_columns(spec)]
+    assert columns == expected_columns
+
+    rows = conn.execute(
+        f'SELECT unique_id, position_append_mask, satellites_in_use, '
+        f'analog_in_1, backup_battery_percentage, device_status, tail '
+        f'FROM "{table_name}" ORDER BY send_time'
+    ).fetchall()
+    assert rows == [
+        ("862524060867948", "01", 12, None, 100, "221102", "$"),
+        ("862524060867948", "01", 12, None, 100, "221102", "$"),
     ]
