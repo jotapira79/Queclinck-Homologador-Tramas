@@ -9,6 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Optional
 
+from queclink.parser import load_spec as load_parser_spec
 from queclink.parser import parse_line
 
 _LOGGER = logging.getLogger(__name__)
@@ -35,8 +36,8 @@ def resolve_spec(report: str, model: str) -> dict:
     spec_path = _repository_root() / "spec" / model_norm / f"{report_norm}.yml"
     if not spec_path.exists():
         raise FileNotFoundError(spec_path)
-    fields = _extract_spec_fields(spec_path)
-    return {"path": spec_path, "fields": fields}
+    spec_obj = load_parser_spec(model.strip().upper(), report.strip().upper())
+    return {"path": spec_path, "fields": spec_obj.fields, "spec": spec_obj}
 
 
 def _strip_comment(line: str) -> str:
@@ -187,6 +188,17 @@ def spec_to_sql_columns(spec: dict) -> list[tuple[str, str]]:
         "list": "TEXT",
         "array": "TEXT",
     }
+    spec_obj = spec.get("spec")
+    if spec_obj is not None:
+        columns: list[tuple[str, str]] = []
+        for field in getattr(spec_obj, "fields", []):
+            if not getattr(field, "name", None):
+                continue
+            type_name = str(getattr(field, "type", "") or "").strip().lower()
+            sql_type = type_map.get(type_name, "TEXT")
+            columns.append((field.name, sql_type))
+        return columns
+
     columns: list[tuple[str, str]] = []
     for field in spec.get("fields", []):
         name = field.get("name")

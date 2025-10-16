@@ -372,6 +372,14 @@ def parse_line(
         value = _parse_field(field, stream, context, remaining_fields=remaining)
         if value is not _SKIP:
             result[field.name] = value
+
+    normalized_report = message
+    if normalized_report:
+        normalized_report = normalized_report.upper()
+    if normalized_report and "report" not in result:
+        result["report"] = normalized_report
+    if normalized_report and "message" not in result:
+        result["message"] = normalized_report
     return result
 
 
@@ -509,21 +517,23 @@ def _is_bit_set(value: object, bit: int) -> bool:
     if bit < 0:
         return False
 
-    numeric = _to_int(value)
-    if numeric is not None and (numeric & (1 << bit)):
-        return True
+    numeric: Optional[int] = None
 
     if isinstance(value, str):
         text = value.strip()
-        if text:
-            try:
-                numeric_hex = int(text, 16)
-            except ValueError:
-                numeric_hex = None
-            else:
-                return bool(numeric_hex & (1 << bit))
+        if not text:
+            return False
+        try:
+            numeric = int(text, 16)
+        except ValueError:
+            numeric = _to_int(value)
+    else:
+        numeric = _to_int(value)
 
-    return False
+    if numeric is None:
+        return False
+
+    return bool(numeric & (1 << bit))
 
 
 def _to_int(value: object) -> Optional[int]:
