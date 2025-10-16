@@ -50,28 +50,46 @@ schema:
 
         # --- Append Mask de posición (estilo GV58LAU) ---
         - { name: position_append_mask, type: hex, length: 2, description: "00-FF (Bit0=Sats, Bit1=H-Acc, Bit2=V-Acc, Bit3=3D-Acc)" }
-        - { name: satellites_in_use, type: int, min: 0, max: 72, nullable: true, when: { mask: position_append_mask, bit: 0 }, allow_empty: true }
-        - { name: horizontal_gnss_accuracy, type: float, min: 0.00, max: 99.99, nullable: true, when: { mask: position_append_mask, bit: 1 }, allow_empty: true }
-        - { name: vertical_gnss_accuracy, type: float, min: 0.00, max: 99.99, nullable: true, when: { mask: position_append_mask, bit: 2 }, allow_empty: true }
-        - { name: gnss_3d_accuracy, type: float, min: 0.00, max: 99.99, nullable: true, when: { mask: position_append_mask, bit: 3 }, allow_empty: true }
+        - { name: satellites_in_use, type: int, min: 0, max: 72, optional: true, when: { mask: position_append_mask, bit: 0 } }
+        -
+          name: horizontal_gnss_accuracy
+          type: float
+          min: 0.00
+          max: 99.99
+          optional: true
+          when:
+            any_of:
+              - { mask: position_append_mask, bit: 1 }
+              - { mask: position_append_mask, bit: 3 }
+        -
+          name: vertical_gnss_accuracy
+          type: float
+          min: 0.00
+          max: 99.99
+          optional: true
+          when:
+            any_of:
+              - { mask: position_append_mask, bit: 2 }
+              - { mask: position_append_mask, bit: 3 }
+        - { name: gnss_3d_accuracy, type: float, min: 0.00, max: 99.99, optional: true, when: { mask: position_append_mask, bit: 3 } }
 
         # --- Acumulados / IO ---
         - { name: mileage_km, type: float, min: 0.0, max: 4294967.0 }
         - { name: hour_meter, type: string, pattern: "^[0-9]{7}:[0-5][0-9]:[0-5][0-9]$", example: "0000000:00:00" }
-        - { name: analog_in_1, type: string, max_length: 5, nullable: true, description: "0-16000(mV)|F(0-100)" }
-        - { name: analog_in_2, type: string, max_length: 5, nullable: true, description: "0-16000(mV)|F(0-100)" }
-        - { name: analog_in_3, type: string, max_length: 5, nullable: true, description: "0-16000(mV)|F(0-100)" }
-        - { name: backup_battery_percentage, type: int, min: 0, max: 100, nullable: true }
+        - { name: analog_in_1, type: string, max_length: 5, optional: true, description: "0-16000(mV)|F(0-100)" }
+        - { name: analog_in_2, type: string, max_length: 5, optional: true, description: "0-16000(mV)|F(0-100)" }
+        - { name: analog_in_3, type: string, max_length: 5, optional: true, description: "0-16000(mV)|F(0-100)" }
+        - { name: backup_battery_percentage, type: int, min: 0, max: 100, optional: true }
         - { name: device_status, type: hex, length_variant: [6,10] }
-        - { name: reserved1, type: string, length: 0, nullable: true }
-        - { name: reserved2, type: string, length: 0, nullable: true }
-        - { name: reserved3, type: string, length: 0, nullable: true }
+        - { name: reserved1, type: string, optional: true }
+        - { name: reserved2, type: string, optional: true }
+        - { name: reserved3, type: string, optional: true }
 
     - name: tail
       fields:
         - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS" }
         - { name: count_number, type: hex, length: 4, description: "0000-FFFF (no es CRC)" }
-        - { name: tail, const: "$", type: string }
+        - { name: tail, const: "$", type: string, optional: true, default_if_absent: "$" }
 
 # --------- Derivaciones útiles ---------
 derivations:
