@@ -17,8 +17,7 @@ schema:
     # =========================
     - name: head
       fields:
-        - { name: header, const_any: ["+RESP:GT", "+BUFF:GT"], type: string }
-        - { name: message, const: "ERI", type: string }
+        - { name: header, const_any: ["+RESP:GTERI", "+BUFF:GTERI"], type: string }
         - { name: full_protocol_version, type: hex, length_variant: [6, 7] }
         - { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$" }
         - { name: device_name, type: string, max_length: 20 }
