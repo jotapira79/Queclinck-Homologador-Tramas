@@ -43,3 +43,11 @@ def test_parse_gtfri_buff_handles_pdop_bundle():
 
     assert data.get("count_number") == "868C"
     assert data.get("tail") == "$"
+
+
+def test_parse_gtfri_resp_ignores_bom_on_header():
+    bom_line = "\ufeff" + RESP_SAMPLE
+
+    data = parse_line(bom_line)
+
+    assert data.get("header") == "+RESP:GTFRI"
