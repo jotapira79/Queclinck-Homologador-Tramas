@@ -40,6 +40,24 @@ def resolve_spec(report: str, model: str) -> dict:
     return {"path": spec_path, "fields": spec_obj.fields, "spec": spec_obj}
 
 
+def _table_name(report: str, model: str, spec: dict) -> str:
+    spec_obj = spec.get("spec")
+    if spec_obj is not None:
+        table_name = getattr(spec_obj, "table_name", None)
+        if table_name:
+            return str(table_name)
+
+    report_lower = (report or "").strip().lower()
+    model_lower = (model or "").strip().lower()
+    if model_lower and report_lower:
+        return f"{report_lower}_{model_lower}"
+    if report_lower:
+        return f"{report_lower}_records"
+    if model_lower:
+        return f"{model_lower}_records"
+    return "records"
+
+
 def _strip_comment(line: str) -> str:
     in_single = False
     in_double = False
@@ -211,29 +229,46 @@ def spec_to_sql_columns(spec: dict) -> list[tuple[str, str]]:
 
 
 def ensure_table(conn, report: str, model: str, spec: dict) -> None:
-    report_lower = report.strip().lower()
-    table = f"{report_lower}_records"
+    table = _table_name(report, model, spec)
     columns = spec_to_sql_columns(spec)
-    column_defs = ["id INTEGER PRIMARY KEY AUTOINCREMENT"]
+    column_defs: list[str] = []
     seen: set[str] = set()
     for name, sql_type in columns:
         if name in seen:
             continue
         seen.add(name)
-        column_defs.append(f"\"{name}\" {sql_type}")
-    unique_candidates = ("imei", "send_time", "count_hex")
-    if all(field in seen for field in unique_candidates):
-        column_defs.append("UNIQUE(imei, send_time, count_hex)")
-    conn.execute(
-        f"CREATE TABLE IF NOT EXISTS {table} ({', '.join(column_defs)})"
+        column_defs.append(f'"{name}" {sql_type}')
+
+    if not column_defs:
+        return
+
+    cursor = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
     )
-    if {"imei", "send_time"}.issubset(seen):
+    table_exists = cursor.fetchone() is not None
+    if not table_exists:
         conn.execute(
-            f"CREATE INDEX IF NOT EXISTS idx_{table}_imei_send_time ON {table} (imei, send_time)"
+            f'CREATE TABLE IF NOT EXISTS "{table}" ({", ".join(column_defs)})'
+        )
+    else:
+        existing_info = conn.execute(f'PRAGMA table_info("{table}")').fetchall()
+        existing_columns = {row[1] for row in existing_info}
+        for name, sql_type in columns:
+            if name not in existing_columns:
+                conn.execute(
+                    f'ALTER TABLE "{table}" ADD COLUMN "{name}" {sql_type}'
+                )
+
+    if {"imei", "send_time"}.issubset(seen):
+        index_name = f"idx_{table}_imei_send_time"
+        conn.execute(
+            f'CREATE INDEX IF NOT EXISTS {index_name} ON "{table}" (imei, send_time)'
         )
     if {"model", "send_time"}.issubset(seen):
+        index_name = f"idx_{table}_model_send_time"
         conn.execute(
-            f"CREATE INDEX IF NOT EXISTS idx_{table}_model_send_time ON {table} (model, send_time)"
+            f'CREATE INDEX IF NOT EXISTS {index_name} ON "{table}" (model, send_time)'
         )
     conn.commit()
 
@@ -273,6 +308,14 @@ def normalize_for_sql(spec: dict, parsed: dict) -> dict:
     report = parsed.get("report") or parsed.get("message")
     row: dict[str, Optional[object]] = {}
     column_types = spec_to_sql_columns(spec)
+    field_specs = {}
+    spec_obj = spec.get("spec")
+    if spec_obj is not None:
+        field_specs = {
+            getattr(field, "name", ""): field
+            for field in getattr(spec_obj, "fields", [])
+            if getattr(field, "name", None)
+        }
     for column, sql_type in column_types:
         raw_value = parsed.get(column)
         if raw_value in ("", None):
@@ -287,18 +330,29 @@ def normalize_for_sql(spec: dict, parsed: dict) -> dict:
             else:
                 value = _as_text(raw_value)
         if value is None and column not in parsed:
+            field_spec = field_specs.get(column)
+            if field_spec and (
+                getattr(field_spec, "optional", False)
+                or getattr(field_spec, "present_if", None)
+                or getattr(field_spec, "present_if_any", None)
+                or getattr(field_spec, "enabled_if_any", None)
+            ):
+                row[column] = value
+                continue
             _LOGGER.warning("[WARN] missing field %s for report %s", column, report)
         row[column] = value
     return row
 
 
-def insert_record(conn, report: str, row: dict) -> None:
-    report_lower = report.strip().lower()
-    table = f"{report_lower}_records"
+def insert_record(conn, report: str, model: str, spec: dict, row: dict) -> None:
+    table = _table_name(report, model, spec)
     columns = list(row.keys())
     escaped_columns = [f'"{col}"' for col in columns]
     placeholders = ", ".join(f":{col}" for col in columns)
-    sql = f"INSERT OR IGNORE INTO {table} ({', '.join(escaped_columns)}) VALUES ({placeholders})"
+    sql = (
+        f'INSERT OR IGNORE INTO "{table}" '
+        f"({', '.join(escaped_columns)}) VALUES ({placeholders})"
+    )
     conn.execute(sql, row)
     conn.commit()
 
@@ -339,7 +393,7 @@ def ingest_lines(
             continue
         ensure_table(conn, report, model, spec)
         row = normalize_for_sql(spec, parsed)
-        insert_record(conn, report, row)
+        insert_record(conn, report, model, spec, row)
         inserted += 1
 
     return inserted
