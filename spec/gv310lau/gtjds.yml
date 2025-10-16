@@ -29,16 +29,16 @@ schema:
     - name: body
       fields:
         # --- Cabecera JDS ---
+        - name: jamming_state
+          type: int
+          enum: [0,1]
+          description: "0=No jamming / Cleared, 1=Jamming detected"
         - name: jamming_net
           type: int
           min: 1
           max: 5
           description: "Network mode: 1=EGPRS/GSM, 2=LTE-Cat4, 3=WCDMA+EGPRS/GSM+LTE, 4=WCDMA, 5=WCDMA+EGPRS"
         - { name: gnss_accuracy_level, type: int, min: 0, max: 50 }
-        - name: jamming_state
-          type: int
-          enum: [0,1]
-          description: "0=No jamming / Cleared, 1=Jamming detected"
         # --- GNSS / Movimiento ---
         - { name: speed_kmh, type: float, min: 0.0, max: 999.9 }
         - { name: azimuth_deg, type: int, min: 0, max: 359 }
