@@ -33,13 +33,33 @@ def _normalize_report_name(message: str) -> str:
     return normalized
 
 
-def _prepare_line_for_parsing(raw_line: str, head: HeadInfo) -> str:
-    report = head.report or ""
+def _prepare_line_for_parsing(
+    raw_line: str, head: HeadInfo, spec: Optional[Spec]
+) -> str:
+    if spec is None:
+        return raw_line
+
+    report = (head.report or "").strip().upper()
     if not report.startswith("GT"):
         return raw_line
+
+    header_field = next((field for field in spec.fields if field.name == "header"), None)
+    if not header_field or not header_field.const_any:
+        return raw_line
+
+    allowed_headers = set(header_field.const_any)
+    if "+RESP:GT" not in allowed_headers and "+BUFF:GT" not in allowed_headers:
+        return raw_line
+
     suffix = report[2:]
+    if not suffix:
+        return raw_line
+
     for prefix in ("+RESP:GT", "+BUFF:GT"):
         marker = f"{prefix}{suffix}"
+        if marker in allowed_headers:
+            # ``spec`` already expects the full header, no replacement needed.
+            return raw_line
         if raw_line.startswith(marker):
             return raw_line.replace(marker, f"{prefix},{suffix}", 1)
     return raw_line
@@ -68,8 +88,6 @@ def _process_line(
             )
             return False
 
-    normalized_line = _prepare_line_for_parsing(raw_line, head)
-
     fields = _split_fields(raw_line)
     if len(fields) < 3:
         _LOGGER.warning("Línea %s: trama sin IMEI", line_number)
@@ -88,6 +106,8 @@ def _process_line(
             "Línea %s: no se encontró la spec para %s/%s", line_number, model, head.report
         )
         return False
+
+    normalized_line = _prepare_line_for_parsing(raw_line, head, spec)
 
     try:
         record = parse_line(normalized_line, head.source, model, head.report, spec=spec)
