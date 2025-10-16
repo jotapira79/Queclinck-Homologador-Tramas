@@ -624,13 +624,29 @@ def _convert_value(raw: str, field_type: str):
     return raw
 
 
+def _strip_bom(text: str) -> str:
+    """Remove Unicode byte order marks (BOM) from the beginning of a string."""
+
+    if not text:
+        return text
+
+    # Python already strips common whitespace with ``str.strip`` but BOM characters
+    # are not considered whitespace. Some Windows editors (e.g. Notepad) may inject a
+    # UTF-8 BOM (``\ufeff``) at the beginning of exported log files which makes the
+    # first token fail the ``const_any`` validation (e.g. ``+RESP:GTFRI``). By
+    # normalising those characters we make the parser resilient to those files while
+    # keeping the remaining payload untouched.
+    return text.lstrip("\ufeff\ufffe")
+
+
 def _tokenize(line: str, delimiter: str = ",", terminator: str = "$") -> List[str]:
-    payload = line.strip()
+    payload = _strip_bom(line).strip()
     if terminator and payload.endswith(terminator):
         payload = payload[: -len(terminator)]
     if not payload:
         return []
-    return [part.strip() for part in payload.split(delimiter)]
+    parts = [part.strip() for part in payload.split(delimiter)]
+    return [_strip_bom(part) for part in parts]
 
 
 def _split(line: str) -> List[str]:
