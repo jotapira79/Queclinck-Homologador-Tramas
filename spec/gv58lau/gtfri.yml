@@ -21,7 +21,7 @@ schema:
     - name: head
       fields:
         - { name: header, const_any: ["+RESP:GTFRI", "+BUFF:GTFRI"], type: string }
-        - { name: full_protocol_version, type: hex, length: 6, example: "6E1203" }
+        - { name: full_protocol_version, type: hex, length_variant: [6, 10], example: "6E1203" }
         - { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$", example: "866314060873492" }
         - { name: device_name, type: string, max_length: 20, pattern: "^[0-9A-Za-z_-]{1,20}$", example: "GV58LAU" }
 
@@ -50,8 +50,30 @@ schema:
         # --- Position Append Mask (1 byte) y campos dependientes ---
         - { name: position_append_mask, type: hex, length: 2, example: "03" }
         - { name: sats_in_use, type: int, min: 0, max: 72, when: { mask: position_append_mask, bit: 0 } }
-        - { name: hdop, type: float, min: 0.00, max: 99.99, when: { mask: position_append_mask, bit: 1 } }
-        - { name: vdop, type: float, min: 0.00, max: 99.99, when: { mask: position_append_mask, bit: 2 } }
+        -
+          name: hdop
+          type: float
+          min: 0.00
+          max: 99.99
+          when:
+            any_of:
+              - { mask: position_append_mask, bit: 1 }
+              -
+                all_of:
+                  - { mask: position_append_mask, bit: 3 }
+                  - { feature: posmask_bit3_mode, equals: pdop }
+        -
+          name: vdop
+          type: float
+          min: 0.00
+          max: 99.99
+          when:
+            any_of:
+              - { mask: position_append_mask, bit: 2 }
+              -
+                all_of:
+                  - { mask: position_append_mask, bit: 3 }
+                  - { feature: posmask_bit3_mode, equals: pdop }
         - { name: pdop_or_acc_factor, type: float, min: 0.00, max: 99.99, when: { mask: position_append_mask, bit: 3 }, note: "PDOP o GNSS accuracy factor según config.posmask_bit3_mode" }
 
         # --- Contadores y entradas analógicas ---
@@ -70,7 +92,7 @@ schema:
       fields:
         - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS", tz: "UTC" }
         - { name: count_number, type: hex, length: 4 }
-        - { name: tail, const: "$", type: string }
+        - { name: tail, const: "$", type: string, optional: true, default_if_absent: "$" }
 
 masks:
   position_append_mask:
