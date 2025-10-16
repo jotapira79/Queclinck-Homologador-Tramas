@@ -1,0 +1,55 @@
+name: "+RESP/+BUFF:GTINF"
+device: "GV310LAU"
+message_family: "INF"
+encoding: "ASCII"
+delimiter: ","
+terminator: "$"
+version_field: { name: full_protocol_version, length: 6, format: hex }
+
+schema:
+  sections:
+    - name: head
+      fields:
+        - { name: header, const_any: ["+RESP:GT", "+BUFF:GT"], type: string }
+        - { name: message, const: "INF", type: string }
+        - { name: full_protocol_version, type: hex, length: 6 }
+        - { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$" }
+        - { name: device_name, const: "GV310LAU", type: string }
+
+    - name: body
+      fields:
+        - { name: motion_status, type: string, length: 2 }              # 11,12,21,22,41,42,1A,16
+        - { name: iccid, type: string, min_length: 19, max_length: 22 } # algunos firmwares 20/21/22
+        - { name: csq, type: int, min: 0, max: 255 }
+        - { name: ber, type: int, min: 0, max: 99 }
+        - { name: ext_power_supply, type: int, enum: [0,1] }
+        - { name: ext_power_voltage_mv, type: int, min: 0, max: 32000 }
+        - { name: network_type, type: int, enum: [0,1,2,3] }            # 0=unreg,1=EGPRS,2=WCDMA,3=LTE
+        - { name: backup_batt_volt_v, type: float, min: 0.00, max: 5.00, precision: 2 }
+        - { name: charging, type: int, enum: [0,1] }
+        - { name: led_state, type: int, min: 0, max: 9 }
+        - { name: power_saving_mode, type: int, min: 0, max: 9 }
+        - { name: ext_gnss_antenna, type: int, min: 0, max: 9 }
+        - { name: last_fix_utc, type: datetime, format: "YYYYMMDDHHMMSS" }
+        - { name: pin_mask, type: hex, length_variant: [1,2] }
+        - { name: ain1, type: string }                                  # F(0-100) ó mV
+        - { name: ain2, type: string }
+        - { name: ain3, type: string }
+        - { name: di_mask, type: hex, max_length: 4 }
+        - { name: do_mask, type: hex, max_length: 4 }
+        - { name: timezone_offset, type: string, length: 5, pattern: "^[+-][0-9]{4}$" }
+        - { name: dst, type: int, enum: [0,1] }
+
+    - name: tail
+      fields:
+        - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS" }
+        - { name: count_hex, type: hex, length: 4 }
+
+validation:
+  rules:
+    - { name: header_and_message, assert: "(header in ['+RESP:GT', '+BUFF:GT']) and message == 'INF'" }
+    - { name: terminator,        assert: "line.endswith('$')" }
+
+examples:
+  - raw: "+RESP:GTINF,6E1203,135790246811220,GV310LAU,16,898600810906F8048812,16,0,1,12000,1,4.40,0,0,1,1,20230214013254,,2,6,1260,0000,0001,+0800,0,20230214093254,11F0$"
+    parsed_keys_must_include: [imei, device_name, motion_status, timezone_offset, send_time, count_hex]

@@ -1,343 +1,212 @@
-# -*- coding: utf-8 -*-
-"""
-queclink_gteri_parser.py
+"""CLI para homologar tramas Queclink usando las especificaciones YAML."""
 
-Programa para procesar tramas +RESP:GTERI (y +BUFF:GTERI) de equipos Queclink (GV310LAU, GV350CEU, GV58LAU).
-- Lee archivos .txt (una trama por línea), .csv o .xlsx (columna con las tramas).
-- Separa campos según los manuales ERI de cada modelo y genera una base SQLite (.db) con tablas por modelo.
-- Requiere: Python 3.9+, pandas, openpyxl (para .xlsx).
-Uso rápido:
-    python queclink_gteri_parser.py --in ruta/al/archivo.txt --out ruta/salida.db
-    python queclink_gteri_parser.py --in datos.xlsx --sheet Hoja1 --col trama --out salida.db
-"""
+from __future__ import annotations
+
 import argparse
-import csv
-import os
-import re
-import sqlite3
-from dataclasses import dataclass, asdict
-from typing import Dict, List, Optional, Tuple, Any, Iterable
+import logging
+import sys
+from pathlib import Path
+from typing import Iterable, Optional
 
-try:
-    import pandas as pd
-except Exception:
-    pd = None  # Permitimos uso sin pandas si solo se usa .txt
+from queclink.ingestor_sqlite import SQLiteIngestor
+from queclink.parser import HeadInfo, identify_head, load_spec, model_from_imei, parse_line
+from queclink.parser import Spec
 
-GTERI_PREFIXES = ("+RESP:GTERI", "+BUFF:GTERI")
+_LOGGER = logging.getLogger(__name__)
 
 
-def extract_gteri_payload(line: str) -> Optional[str]:
-    if not line:
-        return None
-    matches = [line.find(prefix) for prefix in GTERI_PREFIXES]
-    matches = [idx for idx in matches if idx != -1]
-    if not matches:
-        return None
-    start = min(matches)
-    return line[start:]
-
-def split_fields(payload: str) -> List[str]:
-    payload = payload.strip()
+def _split_fields(line: str) -> list[str]:
+    payload = line.strip()
     if payload.endswith("$"):
         payload = payload[:-1]
-    return [p for p in payload.split(",")]
+    if not payload:
+        return []
+    return [part.strip() for part in payload.split(",")]
 
-def detect_model(fields: List[str]) -> Optional[str]:
-    if len(fields) > 3:
-        return fields[3].strip()
-    return None
 
-def is_gteri(line: str) -> bool:
-    return extract_gteri_payload(line) is not None
+def _normalize_report_name(message: str) -> str:
+    normalized = (message or "").strip().upper()
+    if not normalized:
+        return normalized
+    if not normalized.startswith("GT"):
+        normalized = f"GT{normalized}"
+    return normalized
 
-def safe_float(x: Any) -> Optional[float]:
+
+def _prepare_line_for_parsing(
+    raw_line: str, head: HeadInfo, spec: Optional[Spec]
+) -> str:
+    if spec is None:
+        return raw_line
+
+    report = (head.report or "").strip().upper()
+    if not report.startswith("GT"):
+        return raw_line
+
+    header_field = next((field for field in spec.fields if field.name == "header"), None)
+    if not header_field or not header_field.const_any:
+        return raw_line
+
+    allowed_headers = set(header_field.const_any)
+    if "+RESP:GT" not in allowed_headers and "+BUFF:GT" not in allowed_headers:
+        return raw_line
+
+    suffix = report[2:]
+    if not suffix:
+        return raw_line
+
+    for prefix in ("+RESP:GT", "+BUFF:GT"):
+        marker = f"{prefix}{suffix}"
+        if marker in allowed_headers:
+            # ``spec`` already expects the full header, no replacement needed.
+            return raw_line
+        if raw_line.startswith(marker):
+            return raw_line.replace(marker, f"{prefix},{suffix}", 1)
+    return raw_line
+
+
+def _process_line(
+    raw_line: str,
+    ingestor: SQLiteIngestor,
+    *,
+    line_number: int,
+    expected_report: Optional[str] = None,
+) -> bool:
+    head = identify_head(raw_line)
+    if not head:
+        _LOGGER.warning("Línea %s: encabezado no reconocido", line_number)
+        return False
+
+    if expected_report:
+        normalized = _normalize_report_name(expected_report)
+        if head.report.upper() != normalized:
+            _LOGGER.debug(
+                "Línea %s: se omitió trama %s por no coincidir con --message=%s",
+                line_number,
+                head.report,
+                normalized,
+            )
+            return False
+
+    fields = _split_fields(raw_line)
+    if len(fields) < 3:
+        _LOGGER.warning("Línea %s: trama sin IMEI", line_number)
+        return False
+
+    imei = fields[2]
+    model = model_from_imei(imei)
+    if not model:
+        _LOGGER.warning("Línea %s: prefijo IMEI no homologado (%s)", line_number, imei)
+        return False
+
     try:
-        return float(x)
-    except Exception:
-        return None
+        spec = load_spec(model, head.report)
+    except FileNotFoundError:
+        _LOGGER.warning(
+            "Línea %s: no se encontró la spec para %s/%s", line_number, model, head.report
+        )
+        return False
 
-def safe_int(x: Any, base: int = 10) -> Optional[int]:
+    normalized_line = _prepare_line_for_parsing(raw_line, head, spec)
+
     try:
-        if isinstance(x, str) and base == 16:
-            x = x.lower().replace("0x", "")
-        return int(x, base)
-    except Exception:
-        return None
-
-@dataclass
-class CommonERI:
-    prefix: str
-    is_buff: int
-    full_protocol_version: str
-    imei: str
-    device_name: str
-    eri_mask: Optional[str]
-    ext_power_mv: Optional[int]
-    report_type: Optional[str]
-    number: Optional[int]
-    gnss_acc: Optional[float]
-    speed_kmh: Optional[float]
-    azimuth_deg: Optional[int]
-    altitude_m: Optional[float]
-    lon: Optional[float]
-    lat: Optional[float]
-    gnss_utc: Optional[str]
-    mcc: Optional[str]
-    mnc: Optional[str]
-    lac: Optional[str]
-    cell_id: Optional[str]
-    pos_append_mask: Optional[str]
-    raw_after_pam: str
-    send_time: Optional[str]
-    count_hex: Optional[str]
-
-def parse_common_prefix(fields: List[str]) -> Tuple[CommonERI, int]:
-    prefix = fields[0].strip()
-    is_buff = 1 if prefix.startswith("+BUFF") else 0
-    def get(i: int) -> Optional[str]:
-        return fields[i].strip() if i < len(fields) and fields[i] != "" else None
-    ce = CommonERI(
-        prefix=prefix,
-        is_buff=is_buff,
-        full_protocol_version=get(1) or "",
-        imei=get(2) or "",
-        device_name=get(3) or "",
-        eri_mask=get(4),
-        ext_power_mv=safe_int(get(5)) if get(5) else None,
-        report_type=get(6),
-        number=safe_int(get(7)) if get(7) else None,
-        gnss_acc=safe_float(get(8)) if get(8) else None,
-        speed_kmh=safe_float(get(9)) if get(9) else None,
-        azimuth_deg=safe_int(get(10)) if get(10) else None,
-        altitude_m=safe_float(get(11)) if get(11) else None,
-        lon=safe_float(get(12)) if get(12) else None,
-        lat=safe_float(get(13)) if get(13) else None,
-        gnss_utc=get(14),
-        mcc=get(15),
-        mnc=get(16),
-        lac=get(17),
-        cell_id=get(18),
-        pos_append_mask=get(19),
-        raw_after_pam="",
-        send_time=None,
-        count_hex=None,
-    )
-    return ce, 20
-
-def extract_tail(fields: List[str]) -> Tuple[Optional[str], Optional[str]]:
-    if len(fields) < 2:
-        return None, None
-    send_time = fields[-2].strip() if fields[-2] else None
-    count_hex = fields[-1].strip() if fields[-1] else None
-    if count_hex and count_hex.endswith("$"):
-        count_hex = count_hex[:-1]
-    return send_time, count_hex
-
-def parse_model_specific(device: str, fields: List[str], start_idx: int) -> Dict[str, Any]:
-    remaining = fields[start_idx:-2] if len(fields) >= (start_idx + 2) else fields[start_idx:]
-    out: Dict[str, Any] = {}
-    def looks_like_hourmeter(s: str) -> bool:
-        return bool(re.fullmatch(r"\\d{1,7}:\\d{2}:\\d{2}", s or ""))
-    cursor = 0
-    if cursor < len(remaining) and (remaining[cursor] or "") != "":
-        maybe_sat = remaining[cursor]
-        if re.fullmatch(r"\\d{1,2}", maybe_sat or ""):
-            out["satellites"] = safe_int(maybe_sat)
-            cursor += 1
-    dop_list = []
-    dop_seen = 0
-    for _ in range(3):
-        if cursor < len(remaining):
-            v = remaining[cursor]
-            if re.fullmatch(r"\\d{1,2}(\\.\\d{1,2})?", v or ""):
-                dop_list.append(safe_float(v))
-                cursor += 1
-                dop_seen += 1
-            else:
-                break
-    if dop_seen > 0:
-        out["dop1"] = dop_list[0] if len(dop_list) > 0 else None
-        out["dop2"] = dop_list[1] if len(dop_list) > 1 else None
-        out["dop3"] = dop_list[2] if len(dop_list) > 2 else None
-    else:
-        if cursor < len(remaining) and re.fullmatch(r"\\d", remaining[cursor] or ""):
-            out["gnss_trigger_type"] = safe_int(remaining[cursor]); cursor += 1
-        if cursor < len(remaining) and re.fullmatch(r"\\d", remaining[cursor] or ""):
-            out["gnss_jamming_state"] = safe_int(remaining[cursor]); cursor += 1
-    if cursor < len(remaining) and re.fullmatch(r"\\d+(\\.\\d)?", remaining[cursor] or ""):
-        out["mileage_km"] = safe_float(remaining[cursor]); cursor += 1
-    if cursor < len(remaining) and looks_like_hourmeter(remaining[cursor] or ""):
-        out["hour_meter"] = remaining[cursor]; cursor += 1
-    for i in range(1, 4):
-        if cursor < len(remaining) and (remaining[cursor] or "") != "" and re.fullmatch(r"-?\\d+(\\.\\d+)?|F\\d{1,3}", remaining[cursor] or ""):
-            out[f"analog_in_{i}"] = remaining[cursor]; cursor += 1
+        record = parse_line(normalized_line, head.source, model, head.report, spec=spec)
+    except Exception as exc:  # pragma: no cover - errores de parsing específicos
+        if head.report.upper() == "GTINF":
+            record = _relaxed_gtinf_parse(normalized_line, spec)
+            if record is None:
+                _LOGGER.warning("Línea %s: error al parsear la trama (%s)", line_number, exc)
+                return False
+            _LOGGER.debug(
+                "Línea %s: se aplicó parsing relajado para GTINF (%s)", line_number, exc
+            )
         else:
-            break
-    if cursor < len(remaining) and re.fullmatch(r"\\d{1,3}", remaining[cursor] or ""):
-        val = safe_int(remaining[cursor])
-        if val is not None and 0 <= val <= 100:
-            out["backup_batt_pct"] = val; cursor += 1
-    if cursor < len(remaining) and re.fullmatch(r"[0-9A-Fa-f]{6,10}", remaining[cursor] or ""):
-        out["device_status"] = (remaining[cursor] or "").upper(); cursor += 1
-    if cursor < len(remaining) and re.fullmatch(r"\\d{1,2}", remaining[cursor] or ""):
-        out["uart_device_type"] = safe_int(remaining[cursor]); cursor += 1
-    out["remaining_blob"] = ",".join(remaining[cursor:])
-    return out
+            _LOGGER.warning("Línea %s: error al parsear la trama (%s)", line_number, exc)
+            return False
 
-def parse_line_to_record(line: str) -> Optional[Dict[str, Any]]:
-    payload = extract_gteri_payload(line)
-    if payload is None:
+    ingestor.insert(model, head.report, record, spec=spec)
+    return True
+
+
+def _relaxed_gtinf_parse(line: str, spec: Spec) -> Optional[dict[str, object]]:
+    tokens = _split_fields(line)
+    if len(tokens) < len(spec.fields):
         return None
-    fields = split_fields(payload)
-    if len(fields) < 22:
-        return None
-    ce, nxt = parse_common_prefix(fields)
-    send_time, count_hex = extract_tail(fields)
-    ce.send_time, ce.count_hex = send_time, count_hex
-    model_data = parse_model_specific(ce.device_name, fields, nxt)
-    ce.raw_after_pam = model_data.get("remaining_blob", "")
-    base = asdict(ce)
-    base.update(model_data)
-    base["version"] = base.pop("full_protocol_version")
-    base["count_dec"] = safe_int(base.get("count_hex"), 16) if base.get("count_hex") else None
-    base["lat_lon_valid"] = 1 if (base.get("lat") is not None and base.get("lon") is not None) else 0
-    base["model"] = ce.device_name.upper()
-    return base
+    record: dict[str, object] = {}
+    for field, token in zip(spec.fields, tokens):
+        value: Optional[str] = token if token != "" else None
+        record[field.name] = value
+    record.setdefault("raw_line", line)
+    return record
 
-def iter_messages_from_txt(path: str):
-    with open(path, "r", encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                yield line
 
-def infer_trama_column(df) -> str:
-    candidates = [c for c in df.columns if c.lower() in ("trama", "frame", "gteri", "mensaje", "message", "raw")]
-    if candidates:
-        return candidates[0]
-    if len(df.columns) == 1:
-        return df.columns[0]
-    for c in df.columns:
-        s = df[c].astype(str).head(10).tolist()
-        if any("+RESP:GTERI" in x or "+BUFF:GTERI" in x for x in s):
-            return c
-    return df.columns[0]
+def _iter_lines(path: Path) -> Iterable[str]:
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if stripped:
+                yield stripped
 
-def read_any(path: str, sheet: Optional[str]=None, col: Optional[str]=None) -> List[str]:
-    ext = os.path.splitext(path)[1].lower()
-    if ext in (".txt", ".log"):
-        return list(iter_messages_from_txt(path))
-    if pd is None:
-        raise RuntimeError("Se requiere pandas para leer .csv/.xlsx. Instale pandas y openpyxl.")
-    if ext == ".csv":
-        df = pd.read_csv(path, dtype=str, quoting=csv.QUOTE_MINIMAL, engine="python", encoding="utf-8", errors="ignore")
-    elif ext in (".xlsx", ".xls"):
-        df = pd.read_excel(path, dtype=str, sheet_name=sheet if sheet else 0, engine="openpyxl")
-    else:
-        raise RuntimeError(f"Extensión de archivo no soportada: {ext}")
-    trama_col = col if col else infer_trama_column(df)
-    return [str(x) for x in df[trama_col].fillna("") if str(x).strip() != ""]
 
-SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS gteri_records (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    prefix TEXT,
-    is_buff INTEGER,
-    version TEXT,
-    imei TEXT,
-    model TEXT,
-    eri_mask TEXT,
-    ext_power_mv INTEGER,
-    report_type TEXT,
-    number INTEGER,
-    gnss_acc REAL,
-    speed_kmh REAL,
-    azimuth_deg INTEGER,
-    altitude_m REAL,
-    lon REAL,
-    lat REAL,
-    gnss_utc TEXT,
-    mcc TEXT,
-    mnc TEXT,
-    lac TEXT,
-    cell_id TEXT,
-    pos_append_mask TEXT,
-    satellites INTEGER,
-    dop1 REAL,
-    dop2 REAL,
-    dop3 REAL,
-    gnss_trigger_type INTEGER,
-    gnss_jamming_state INTEGER,
-    mileage_km REAL,
-    hour_meter TEXT,
-    analog_in_1 TEXT,
-    analog_in_2 TEXT,
-    analog_in_3 TEXT,
-    backup_batt_pct INTEGER,
-    device_status TEXT,
-    uart_device_type INTEGER,
-    remaining_blob TEXT,
-    send_time TEXT,
-    count_hex TEXT,
-    count_dec INTEGER,
-    lat_lon_valid INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_model ON gteri_records(model);
-CREATE INDEX IF NOT EXISTS idx_imei ON gteri_records(imei);
-CREATE INDEX IF NOT EXISTS idx_gnssutc ON gteri_records(gnss_utc);
-"""
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Homologador de tramas Queclink controlado por especificaciones YAML",
+    )
+    parser.add_argument("--in", dest="input", required=True, help="Archivo de tramas")
+    parser.add_argument(
+        "--out",
+        dest="output",
+        required=True,
+        help="Ruta al archivo SQLite donde se guardarán los resultados",
+    )
+    parser.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Nivel de log a utilizar",
+    )
+    parser.add_argument(
+        "--message",
+        dest="message",
+        help="Tipo de mensaje a homologar (por ejemplo GTINF, GTERI)",
+    )
+    return parser
 
-def insert_records(db_path: str, rows: List[dict]) -> None:
-    conn = sqlite3.connect(db_path)
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    log_level = getattr(logging, args.log_level.upper(), logging.INFO)
+    logging.basicConfig(level=log_level, format="[%(levelname)s] %(message)s")
+
+    input_path = Path(args.input)
+    output_path = Path(args.output)
+    expected_report = _normalize_report_name(args.message) if args.message else None
+
+    if not input_path.exists():
+        print(f"[ERROR] No se encontró el archivo de entrada: {input_path}", file=sys.stderr)
+        return 1
+
+    ingestor = SQLiteIngestor(output_path)
+    inserted = 0
     try:
-        conn.executescript(SCHEMA_SQL)
-        cols = [
-            "prefix","is_buff","version","imei","model","eri_mask","ext_power_mv","report_type","number",
-            "gnss_acc","speed_kmh","azimuth_deg","altitude_m","lon","lat","gnss_utc","mcc","mnc","lac",
-            "cell_id","pos_append_mask","satellites","dop1","dop2","dop3","gnss_trigger_type","gnss_jamming_state",
-            "mileage_km","hour_meter","analog_in_1","analog_in_2","analog_in_3","backup_batt_pct","device_status",
-            "uart_device_type","remaining_blob","send_time","count_hex","count_dec","lat_lon_valid"
-        ]
-        placeholders = ",".join(["?"]*len(cols))
-        sql = f"INSERT INTO gteri_records({','.join(cols)}) VALUES({placeholders})"
-        data = [tuple(r.get(k) for k in cols) for r in rows]
-        conn.executemany(sql, data)
-        conn.commit()
+        for line_number, line in enumerate(_iter_lines(input_path), start=1):
+            if _process_line(
+                line,
+                ingestor,
+                line_number=line_number,
+                expected_report=expected_report,
+            ):
+                inserted += 1
     finally:
-        conn.close()
+        ingestor.close()
 
-def process_file(in_path: str, out_db: str, sheet: Optional[str]=None, col: Optional[str]=None, limit: Optional[int]=None):
-    messages = read_any(in_path, sheet, col)
-    parsed = []
-    total = 0
-    for line in messages:
-        if limit and total >= limit:
-            break
-        total += 1
-        rec = parse_line_to_record(line)
-        if rec:
-            parsed.append(rec)
-    if not parsed:
-        conn = sqlite3.connect(out_db)
-        try:
-            conn.executescript(SCHEMA_SQL)
-            conn.commit()
-        finally:
-            conn.close()
-        return total, 0
-    insert_records(out_db, parsed)
-    return total, len(parsed)
+    print(f"[OK] {inserted} tramas homologadas en {output_path}")
+    return 0
 
-def cli():
-    ap = argparse.ArgumentParser(description="Procesador de tramas +RESP:GTERI de Queclink (GV310LAU, GV350CEU, GV58LAU) -> SQLite")
-    ap.add_argument("--in", dest="in_path", required=True, help="Ruta de entrada (.txt, .csv, .xlsx)")
-    ap.add_argument("--out", dest="out_db", required=True, help="Ruta de salida .db (SQLite)")
-    ap.add_argument("--sheet", dest="sheet", help="Nombre/índice de hoja para .xlsx")
-    ap.add_argument("--col", dest="col", help="Nombre de la columna que contiene las tramas en .csv/.xlsx")
-    ap.add_argument("--limit", dest="limit", type=int, help="Procesar solo N filas (útil para pruebas)")
-    args = ap.parse_args()
-    total, ok = process_file(args.in_path, args.out_db, args.sheet, args.col, args.limit)
-    print(f"Leídas: {total} | GTERI válidas: {ok} | DB: {args.out_db}")
 
-if __name__ == "__main__":
-    cli()
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())
+

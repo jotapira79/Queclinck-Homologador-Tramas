@@ -1,0 +1,113 @@
+name: "+RESP:GTFRI"
+device: "GV58LAU"
+message_family: "FRI (Fixed Report Information)"
+encoding: "ASCII"
+delimiter: ","
+terminator: "$"
+
+# --- Configuración/Features para compatibilidad ---
+config:
+  # Cómo interpretar el bit 3 de position_append_mask (históricamente PDOP; en v9.00 puede ser 'GNSS accuracy factor').
+  posmask_bit3_mode: "pdop"   # valores: "pdop" | "accuracy_factor"
+
+version_field:
+  name: full_protocol_version
+  length: 6
+  format: hex
+  example: "6E1203"
+
+schema:
+  sections:
+    - name: head
+      fields:
+        - { name: header, const_any: ["+RESP:GTFRI", "+BUFF:GTFRI"], type: string }
+        - { name: full_protocol_version, type: hex, length_variant: [6, 10], example: "6E1203" }
+        - { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$", example: "866314060873492" }
+        - { name: device_name, type: string, max_length: 20, pattern: "^[0-9A-Za-z_-]{1,20}$", example: "GV58LAU" }
+
+    - name: body
+      fields:
+        # --- Cabecera de cuerpo (sin ERI) ---
+        - { name: external_power_mv, type: int, min: 0, max: 32000, nullable: true, description: "External Power Supply (mV), puede venir vacío" }
+        - { name: report_type, type: string, length: 2, note: "X(1-5)Y(0-6) => Report ID/Type" }
+        - { name: number, type: int, min: 1, max: 15, description: "Número de puntos (multi‑point) o secuencia" }
+
+        # --- Posición ---
+        - { name: gnss_accuracy_level, type: int, min: 0, max: 50 }
+        - { name: speed_kmh, type: float, min: 0.0, max: 999.9 }
+        - { name: azimuth_deg, type: int, min: 0, max: 359 }
+        - { name: altitude_m, type: float, note: "(-)xxxxx.x" }
+        - { name: longitude_deg, type: float, note: "(-)xxx.xxxxxx" }
+        - { name: latitude_deg, type: float, note: "(-)xx.xxxxxx" }
+        - { name: gnss_utc_time, type: datetime, format: "YYYYMMDDHHMMSS" }
+
+        # --- GSM/Red servidora ---
+        - { name: mcc, type: string, pattern: "^0[0-9]{3}$" }
+        - { name: mnc, type: string, pattern: "^0[0-9]{2,3}$" }
+        - { name: lac, type: hex, length: 4 }
+        - { name: cell_id, type: hex, length_variant: [4,8] }
+
+        # --- Position Append Mask (1 byte) y campos dependientes ---
+        - { name: position_append_mask, type: hex, length: 2, example: "03" }
+        - { name: sats_in_use, type: int, min: 0, max: 72, when: { mask: position_append_mask, bit: 0 } }
+        -
+          name: hdop
+          type: float
+          min: 0.00
+          max: 99.99
+          when:
+            any_of:
+              - { mask: position_append_mask, bit: 1 }
+              -
+                all_of:
+                  - { mask: position_append_mask, bit: 3 }
+                  - { feature: posmask_bit3_mode, equals: pdop }
+        -
+          name: vdop
+          type: float
+          min: 0.00
+          max: 99.99
+          when:
+            any_of:
+              - { mask: position_append_mask, bit: 2 }
+              -
+                all_of:
+                  - { mask: position_append_mask, bit: 3 }
+                  - { feature: posmask_bit3_mode, equals: pdop }
+        - { name: pdop_or_acc_factor, type: float, min: 0.00, max: 99.99, when: { mask: position_append_mask, bit: 3 }, note: "PDOP o GNSS accuracy factor según config.posmask_bit3_mode" }
+
+        # --- Contadores y entradas analógicas ---
+        - { name: mileage_km, type: float, min: 0.0, max: 4294967.0 }
+        - { name: hour_meter, type: string, pattern: "^[0-9]{7}:[0-5][0-9]:[0-5][0-9]$", example: "0000102:34:33" }
+        - { name: reserved1, type: number, nullable: true }
+        - { name: reserved2, type: number, nullable: true }
+        - { name: reserved3, type: number, nullable: true }
+        - { name: backup_batt_pct, type: int, min: 0, max: 100, nullable: true }
+        - { name: device_status, type: hex, length_variant: [6,10], example: "210000" }
+        - { name: reserved4, type: number, nullable: true }
+        - { name: reserved5, type: number, nullable: true }
+        - { name: reserved6, type: number, nullable: true }
+
+    - name: tail
+      fields:
+        - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS", tz: "UTC" }
+        - { name: count_number, type: hex, length: 4 }
+        - { name: tail, const: "$", type: string, optional: true, default_if_absent: "$" }
+
+masks:
+  position_append_mask:
+    size_bits: 8
+    bits:
+      0: { field: sats_in_use, description: "Satellites in Use" }
+      1: { field: hdop, description: "Horizontal GNSS Accuracy (HDOP)" }
+      2: { field: vdop, description: "Vertical GNSS Accuracy (VDOP)" }
+      3: { field: pdop_or_acc_factor, description: "3D GNSS Accuracy (PDOP) o Accuracy Factor" }
+
+notes:
+  - "En GTFRI no se reportan bloques ERI (CAN, 1‑wire, BLE, Fuel). Si AT+GTFRI.eri_mask activa bits de periféricos y hay periféricos presentes, el equipo enviará +RESP:GTERI en vez de GTFRI."
+  - "GNSS UTC Time debe convertirse a horario oficial de Chile continental en la app, respetando cambios de DST."  
+
+examples:
+  raw_frames:
+    - "+RESP:GTFRI,6E1203,866314060873492,GV58LAU,12041,11,1,0,64.0,117.129299,31.838832,20250314085445,0460,0000,550B,0E9E30A5,0D,12,210100,0.00,0.00,0.00,20250314085447,0132$"
+

@@ -1,0 +1,20 @@
+name: viz_maps
+summary: >-
+  Visualización de recorridos diarios en mapas interactivos Folium
+  diferenciando reportes buffer y no buffer, con conversión a hora local de Chile.
+acceptance_criteria:
+  - Se genera un módulo `viz` con funciones para consultar puntos diarios desde la base SQLite y
+    renderizar mapas con Folium en colores distintos para buffer/no-buffer.
+  - La función CLI permite seleccionar base de datos, IMEI, fecha local chilena, proveedor de tiles
+    y ruta de salida, generando archivos HTML y GeoJSON.
+  - Los tooltips del mapa muestran la hora local convertida a `America/Santiago`, coordenadas y
+    el tipo de reporte.
+  - El repositorio incluye documentación en `docs/viz/mapas.md` y una sección actualizada en
+    el README con instrucciones de uso.
+  - Existe un workflow de GitHub Actions que ejecuta pruebas básicas del módulo y publica como
+    artefacto un mapa de ejemplo generado durante la CI.
+dependencies:
+  python:
+    - folium
+    - pytz
+    - python-dateutil

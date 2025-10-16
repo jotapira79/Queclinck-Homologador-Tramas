@@ -14,10 +14,12 @@ Este documento resume, normaliza y hace operativa la especificación del mensaje
 
 ## 1) Descripción general
 
-- **Nombre de mensaje:** `+RESP:GTERI`  
+- **Nombre de mensaje:** `+RESP/+BUFF:GTERI`
 - **Dispositivo:** `GV310LAU`  
 - **Propósito:** Reporte de posición ampliado (sustituye a `+RESP:GTFRI` cuando la función ERI está habilitada).  
-- **Formato:** ASCII, campos separados por coma `,` y terminados con `$`.  
+- **Formato:** ASCII, campos separados por coma `,` y terminados con `$`.
+- **Identificación del modelo:** la homologación usa el prefijo IMEI `86858906`,
+  independiente del valor configurado en `Device Name`.
 
 > Cuando `+RESP:GTERI` está habilitado, el equipo envía `+RESP:GTERI` en lugar de `+RESP:GTFRI`.
 
@@ -41,12 +43,12 @@ La trama se divide en **Head**, **Body** y **Tail**. A continuación, se listan 
 
 | Parte  | Campo            | Longitud | Rango/Formato                            |
 |--------|------------------|----------|------------------------------------------|
-| Head   | Header           | 8        | `+RESP:GT`                               |
+| Head   | Header           | 8        | `+RESP:GT` \| `+BUFF:GT`                 |
 |        | Message Name     | 3        | `ERI`                                     |
 |        | Coma separadora  | 1        | `,`                                       |
 |        | Full Proto Ver.  | 6        | `000000` – `FFFFFF` (hex)                |
 |        | Unique ID        | 15       | IMEI                                      |
-|        | Device Name      | ≤20      | 0–9, a–z, A–Z, `-`, `_`                   |
+|        | Device Name      | ≤20      | 0–9, a–z, A–Z, `-`, `_` (personalizable)  |
 
 ### 3.2 Body
 
@@ -109,7 +111,7 @@ Controla los **campos posicionales** después de `<Cell ID>`.
 ### 4.2 ERI Mask (4 bytes, hex)
 Controla los **bloques ERI**:
 - **Bit 0** → *Digital Fuel Sensor Data*.
-- **Bit 1** → *1‑wire Data* (incluye ID/Type/Data). Si Type=1 (temperatura), los datos están en **complemento a dos**; convertir a decimal y multiplicar × 0.0625 °C.
+- **Bit 1** → *1‑wire Data* (incluye ID/Type/Data). Si Type=1 (temperatura), los datos están en **complemento a dos**; convertir a decimal y multiplicar × 0.0625 °C. Si el bit está deshabilitado, el bloque completo (número de dispositivos y lista) no aparece en la trama. Cuando `Device Number` es `0`, tampoco se listan ID/Type/Data. Algunos firmwares omiten `Type` y/o `Data` cuando no hay información adicional; el parser acepta esos campos vacíos/ausentes.
 - **Bit 2** → *CAN Data*.
 - **Bit 10** → *Fuel Sensor Data* (si *Sensor Type* es 2 ó 6, puede incluir *Fuel Temperature*).
 
@@ -167,7 +169,7 @@ Incluye múltiples sub‑campos: Number, Index, Type, Model/BeaconID, Raw Data, 
 
 ## 5) Reglas de parsing y validación
 
-1. **Tokenización:** separar por comas `,`; validar que el primer token sea `+RESP:GTERI` y el último termine con `$`.
+1. **Tokenización:** separar por comas `,`; validar que el primer token sea `+RESP:GTERI` o `+BUFF:GTERI` y el último termine con `$`.
 2. **Tipos:** convertir numéricos (enteros, float) y fechas (`YYYYMMDDHHMMSS` → UTC ISO‑8601).
 3. **Máscaras:** evaluar **Position Append Mask** (1 byte) y **ERI Mask** (4 bytes) para decidir presencia de campos opcionales.
 4. **Rangos:** aplicar validaciones de rango/forma indicadas en las tablas. Rechazar valores fuera de rango.
@@ -210,7 +212,6 @@ Estructura JSON sugerida para `parse_gteri(trama: str) -> dict`:
   "hour_meter": "0000102:34:33",
   "ai1": 42,
   "ai2": 11172,
-  "backup_batt_pct": 100,
   "device_status": "210000",
   "uart_type": 0,
   "fuel": { "type": "TMPS", "raw": "08351B00043C" },

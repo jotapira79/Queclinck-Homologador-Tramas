@@ -1,0 +1,65 @@
+name: tests
+
+on:
+  push:
+    branches: [ main, "feat/**" ]
+    paths:
+      - "**.py"
+      - "tests/**"
+      - "queclink/**"
+      - ".github/workflows/tests.yml"
+  pull_request:
+    branches: [ main ]
+    paths:
+      - "**.py"
+      - "tests/**"
+      - "queclink/**"
+      - ".github/workflows/tests.yml"
+  workflow_dispatch: {}  # para correrlo a mano desde Actions
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # deps mínimas por si no hay requirements.txt
+          pip install pytest folium pytz
+
+      # Corre TODO (unit + integration). Si prefieres, cambia a 'pytest -q'
+      - name: Run pytest
+        run: |
+          pytest -q
+
+      # (Opcional) Publica artefactos de viz si tus tests generan HTML/GeoJSON
+      - name: Upload viz artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: viz-artifacts
+          path: |
+            **/*.html
+            **/*.geojson
+          if-no-files-found: ignore

@@ -1,0 +1,80 @@
+name: viz
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+  pull_request:
+    paths:
+      - "viz/**"
+      - "tests/viz/**"
+      - "docs/viz/**"
+      - "README.md"
+      - ".github/workflows/viz.yml"
+      - "spec/viz_maps.yml"
+
+jobs:
+  build-map:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install folium pytz python-dateutil pytest
+      - name: Run viz tests
+        run: pytest tests/viz
+      - name: Generar mapa de ejemplo
+        run: |
+          python - <<'PY'
+          import pathlib
+          import sqlite3
+
+          from viz.query import fetch_points_by_day
+          from viz.folium_map import render_map
+
+          artifacts = pathlib.Path("artifacts")
+          artifacts.mkdir(exist_ok=True)
+
+          db_path = artifacts / "sample.db"
+          conn = sqlite3.connect(db_path)
+          try:
+              conn.executescript(
+                  """
+                  CREATE TABLE IF NOT EXISTS gteri_records (
+                      lon REAL,
+                      lat REAL,
+                      gnss_utc TEXT,
+                      is_buff INTEGER,
+                      report_type TEXT,
+                      imei TEXT
+                  );
+                  DELETE FROM gteri_records;
+                  """
+              )
+              sample_rows = [
+                  (-70.6500, -33.4372, "20230801060000", 0, "10", "123456789012345"),
+                  (-70.6515, -33.4380, "20230801063000", 0, "10", "123456789012345"),
+                  (-70.6530, -33.4395, "20230801070000", 1, "10", "123456789012345"),
+                  (-70.6545, -33.4405, "20230801073000", 1, "10", "123456789012345"),
+              ]
+              conn.executemany(
+                  "INSERT INTO gteri_records(lon, lat, gnss_utc, is_buff, report_type, imei) VALUES(?,?,?,?,?,?)",
+                  sample_rows,
+              )
+              conn.commit()
+          finally:
+              conn.close()
+
+          points = fetch_points_by_day(str(db_path), "123456789012345", "2023-08-01")
+          render_map(points, str(artifacts / "map.html"), str(artifacts / "map.geojson"))
+          PY
+      - name: Publicar artefactos
+        uses: actions/upload-artifact@v4
+        with:
+          name: viz-map
+          path: artifacts

@@ -1,0 +1,57 @@
+name: "+RESP/+BUFF:GTINF"
+device: "GV58LAU"
+message_family: "INF"
+encoding: "ASCII"
+delimiter: ","
+terminator: "$"
+version_field: { name: full_protocol_version, length_variant: [6,10], format: hex }
+
+schema:
+  sections:
+    - name: head
+      fields:
+        - { name: header, const_any: ["+RESP:GT", "+BUFF:GT"], type: string }
+        - { name: message, const: "INF", type: string }
+        - { name: full_protocol_version, type: hex, length_variant: [6,10] }
+        - { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$" }
+        - { name: device_name, const: "GV58LAU", type: string }
+
+    - name: body
+      fields:
+        - { name: motion_status, type: string, length: 2 }
+        - { name: iccid, type: string, min_length: 19, max_length: 22 }
+        - { name: csq, type: int, min: 0, max: 255 }
+        - { name: ber, type: int, min: 0, max: 99 }
+        - { name: ext_power_supply, type: int, enum: [0,1] }
+        - { name: ext_power_voltage_mv, type: int, min: 0, max: 32000 }
+        - { name: network_type, type: int, min: 0, max: 9 }
+        - { name: backup_batt_volt_v, type: float, min: 0.00, max: 5.00, precision: 2 }
+        - { name: charging, type: int, enum: [0,1] }
+        - { name: led_state, type: int, min: 0, max: 9, optional: true }
+        - { name: reserved1, type: string, optional: true }
+        - { name: reserved2, type: string, optional: true }
+        - { name: last_fix_utc, type: datetime, format: "YYYYMMDDHHMMSS" }
+        - { name: pin_mask, type: hex, length_variant: [1,2], optional: true }
+        - { name: reserved3, type: string, optional: true }
+        - { name: reserved4, type: string, optional: true }
+        - { name: reserved5, type: string, optional: true }
+        - { name: di_mask, type: hex, max_length: 2, optional: true }
+        - { name: do_mask, type: hex, max_length: 2, optional: true }
+        - { name: timezone_offset, type: string, length: 5, pattern: "^[+-][0-9]{4}$" }
+        - { name: daylight_s, type: int, enum: [0,1] }
+
+    - name: tail
+      fields:
+        - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS" }
+        - { name: count_hex, type: hex, length: 4 }
+
+validation:
+  rules:
+    - { name: header_and_message, assert: "(header in ['+RESP:GT', '+BUFF:GT']) and message == 'INF'" }
+    - { name: terminator,        assert: "line.endswith('$')" }
+
+examples:
+  - raw: "+RESP:GTINF,8020040900,866314061635635,GV58LAU,11,89999202003110001341,58,0,1,12943,3,4.15,0,1,,,20251007213819,0,,,,00,00,+0000,0,20251007215523,48D6$"
+    parsed_keys_must_include: [imei, device_name, motion_status, timezone_offset, send_time, count_hex]
+  - raw: "+BUFF:GTINF,8020040305,866314060965330,GV58LAU,22,89999112400719088191,26,0,1,13742,0,4.22,0,1,,,20250930110413,0,,,,01,00,+0000,0,20250930110413,ED27$"
+    parsed_keys_must_include: [imei, device_name, motion_status, timezone_offset, send_time, count_hex]

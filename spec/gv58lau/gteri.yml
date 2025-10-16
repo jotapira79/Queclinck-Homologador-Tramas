@@ -1,0 +1,237 @@
+name: "+RESP/+BUFF:GTERI"
+device: "GV58LAU"
+message_family: "ERI"
+encoding: "ASCII"
+delimiter: ","
+terminator: "$"
+
+version_field:
+  name: full_protocol_version
+  length: 10
+  format: hex
+
+schema:
+  sections:
+    - name: head
+      fields:
+        - { name: header, const_any: ["+RESP:GTERI", "+BUFF:GTERI"], type: string }
+        - { name: full_protocol_version, type: hex, length: 10 }
+        - { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$" }
+        - { name: device_name, type: string, min_length: 4, max_length: 20 }
+
+    - name: body
+      fields:
+        # --- Core ERI fields ---
+        - { name: eri_mask, type: hex, length: 8, description: "Bitmask que habilita bloques opcionales (CAN, BLE, RAT, etc.)." }
+        - { name: ext_power_mv, type: int, min: 0, max: 32000, nullable: true, description: "Voltaje externo en mV (puede venir vacío)." }
+        - { name: report_type, type: string, length: 2, pattern: "^[0-5][0-6]$", description: "Categoría/subtipo numérico." }
+        - { name: number, type: int, min: 0, max: 15 }
+        - { name: gnss_acc, type: float, min: 0.0, max: 99.9, precision: 2, description: "Precisión GNSS general reportada." }
+
+        # --- Position / GNSS ---
+        - { name: speed_kmh, type: float, min: 0.0, max: 999.9, precision: 1 }
+        - { name: azimuth_deg, type: int, min: 0, max: 359 }
+        - { name: altitude_m, type: float, min: -10000.0, max: 10000.0, precision: 1 }
+        - { name: lon, type: float, min: -180.0, max: 180.0, precision: 6 }
+        - { name: lat, type: float, min: -90.0, max: 90.0, precision: 6 }
+        - { name: gnss_utc, type: datetime, format: "YYYYMMDDHHMMSS" }
+
+        # --- Cellular ---
+        - { name: mcc, type: string, length: 4, pattern: "^0[0-9]{3}$" }
+        - { name: mnc, type: string, length: 4, pattern: "^0[0-9]{3}$" }
+        - { name: lac, type: hex, length: 4 }
+        - { name: cell_id, type: hex, length_variant: [4, 8] }
+
+        # --- Position Append Mask controlled fields ---
+        - { name: pos_append_mask, type: hex, length: 4, description: "bit0=satellites, bit1=HDOP, bit2=VDOP, bit3=PDOP" }
+        - name: satellites
+          type: int
+          min: 0
+          max: 72
+          present_if: { mask_field: pos_append_mask, bit: 0 }
+        - name: hdop
+          type: float
+          min: 0.00
+          max: 99.99
+          precision: 2
+          present_if: { mask_field: pos_append_mask, bit: 1 }
+        - name: vdop
+          type: float
+          min: 0.00
+          max: 99.99
+          precision: 2
+          present_if: { mask_field: pos_append_mask, bit: 2 }
+        - name: pdop
+          type: float
+          min: 0.00
+          max: 99.99
+          precision: 2
+          present_if: { mask_field: pos_append_mask, bit: 3 }
+        - name: gnss_trigger_type
+          type: int
+          min: 0
+          max: 9
+          optional: true
+          description: "Trigger GNSS reportado tras los DOP."
+          present_if_any:
+            - { field_present: hdop }
+            - { field_present: vdop }
+            - { field_present: pdop }
+
+        # --- Vehicle counters / status ---
+        - { name: mileage_km, type: float, min: 0.0, max: 4294967.0, precision: 1 }
+        - { name: hour_meter, type: string, pattern: "^[0-9]{1,7}:[0-5][0-9]:[0-5][0-9]$", description: "D:HH:MM" }
+        - { name: reserved_1, type: string, nullable: true }
+        - { name: reserved_2, type: string, nullable: true }
+        - { name: reserved_3, type: string, nullable: true }
+        - { name: backup_batt_pct, type: int, min: 0, max: 100 }
+        - { name: device_status, type: hex, length_variant: [6, 10] }
+        - { name: reserved_after_status, type: string, nullable: true }
+
+        # --- Optional ERI-controlled blocks ---
+        - name: can_data
+          type: string
+          max_length: 1024
+          enabled_if_any:
+            - { mask_field: eri_mask, bit: 2 }
+          description: "Payload CAN en ASCII/HEX."
+
+        - name: ble_count
+          type: int
+          min: 0
+          max: 32
+          enabled_if_any:
+            - { mask_field: eri_mask, bit: 8 }
+
+        - name: ble_accessories
+          type: group_repeated
+          repeat: ble_count
+          enabled_if_any:
+            - { mask_field: eri_mask, bit: 8 }
+          fields:
+            - { name: ble_index, type: int, min: 0, max: 63 }
+            - { name: ble_type, type: int, min: 0, max: 255 }
+            - { name: ble_model, type: int, min: 0, max: 255 }
+            - { name: ble_raw_data, type: string, optional: true }
+            - { name: ble_append_mask, type: hex, length: 2, optional: true }
+            - name: ble_name
+              type: string
+              max_length: 32
+              present_if: { mask_field: ble_append_mask, bit: 0 }
+            - name: ble_mac
+              type: hex
+              length: 12
+              present_if: { mask_field: ble_append_mask, bit: 1 }
+            - name: ble_status
+              type: int
+              min: 0
+              max: 1
+              present_if: { mask_field: ble_append_mask, bit: 2 }
+            - name: ble_batt_mv
+              type: int
+              min: 0
+              max: 5000
+              present_if: { mask_field: ble_append_mask, bit: 3 }
+            - name: ble_temp_c
+              type: float
+              min: -40.0
+              max: 85.0
+              precision: 2
+              present_if: { mask_field: ble_append_mask, bit: 4 }
+            - name: ble_humidity_rh
+              type: float
+              min: 0.0
+              max: 100.0
+              precision: 1
+              present_if: { mask_field: ble_append_mask, bit: 5 }
+            - name: ble_io_output_status
+              type: int
+              min: 0
+              max: 3
+              present_if: { mask_field: ble_append_mask, bit: 7 }
+            - name: ble_io_input_status
+              type: int
+              min: 0
+              max: 1
+              present_if: { mask_field: ble_append_mask, bit: 7 }
+            - name: ble_io_analog_mv
+              type: int
+              min: 0
+              max: 32000
+              present_if: { mask_field: ble_append_mask, bit: 7 }
+            - name: ble_mode
+              type: int
+              min: 0
+              max: 10
+              present_if: { mask_field: ble_append_mask, bit: 8 }
+            - name: ble_event
+              type: int
+              min: 0
+              max: 255
+              present_if: { mask_field: ble_append_mask, bit: 8 }
+            - name: ble_tire_pressure_kpa
+              type: int
+              min: 0
+              max: 500
+              present_if: { mask_field: ble_append_mask, bit: 9 }
+            - name: ble_timestamp
+              type: datetime
+              format: "YYYYMMDDHHMMSS"
+              present_if: { mask_field: ble_append_mask, bit: 10 }
+            - name: ble_temp_c_enhanced
+              type: float
+              min: -40.00
+              max: 85.00
+              precision: 2
+              present_if: { mask_field: ble_append_mask, bit: 11 }
+            - name: ble_magnet_id
+              type: hex
+              length: 2
+              present_if: { mask_field: ble_append_mask, bit: 12 }
+            - name: ble_mag_event_counter
+              type: int
+              min: 0
+              max: 65535
+              present_if: { mask_field: ble_append_mask, bit: 12 }
+            - name: ble_magnet_state
+              type: int
+              enum: [0, 1]
+              present_if: { mask_field: ble_append_mask, bit: 12 }
+            - name: ble_batt_pct
+              type: int
+              min: 0
+              max: 100
+              present_if: { mask_field: ble_append_mask, bit: 13 }
+            - name: ble_relay_state
+              type: int
+              enum: [0, 1]
+              present_if: { mask_field: ble_append_mask, bit: 14 }
+
+        - name: rat_band
+          type: group
+          optional: true
+          description: "Habitualmente controlado por el bit 13 de eri_mask, pero algunos firmwares lo envían siempre."
+          fields:
+            - { name: rat, type: int, min: 0, max: 255 }
+            - { name: band, type: string, nullable: true }
+
+    - name: tail
+      fields:
+        - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS" }
+        - { name: count_hex, type: hex, length: 4 }
+
+validation:
+  rules:
+    - { name: header_and_message, assert: "(header in ['+RESP:GT', '+BUFF:GT']) and message == 'ERI'" }
+    - { name: terminator, assert: "line.endswith('$')" }
+  notes:
+    - "pos_append_mask: bit0=satellites, bit1=HDOP, bit2=VDOP, bit3=PDOP."
+    - "eri_mask bit2 habilita CAN data; bit8 habilita accesorios BLE; bit13 habilita RAT/Band."
+    - "cell_id puede llegar en 16 o 32 bits (length_variant [4,8])."
+    - "Al faltar bloques opcionales (pos_append_mask sin bits, BLE/CAN/RAT deshabilitados) la cantidad total de campos disminuye."
+
+examples:
+  - raw: "+RESP:GTERI,8020040900,866314060268081,GV58LAU,00000100,,10,1,2,14.2,71,35.6,117.243103,31.854079,20250320015848,0460,0000,550B,0E9E30A5,0009,9,2.01,1.47,2.49,0.0,1234:56:07,,85,220100,,2,00,1,0,00000001,001F,TD_100109,FD6D3DE6D704,1,3600,18,01,1,3,0000006D,011F,DU_100361,F022A2143F36,1,3500,0,9,0,20250320015850,00D0$"
+    parsed_keys_must_include: [imei, device_name, eri_mask, lon, lat, gnss_utc, pos_append_mask, satellites, hdop, pdop, ble_count, send_time, count_hex]
+  - raw: "+BUFF:GTERI,8020040900,866314060965330,GV58LAU,00000008,,21,3,1,0.0,0,0.0,0.000000,0.000000,20250930110413,0736,0001,1234,0000,0001,8,1.50,,,100,220100,,0,20250930110413,ED27$"
+    parsed_keys_must_include: [imei, device_name, eri_mask, ext_power_mv, pos_append_mask, mileage_km, send_time, count_hex]

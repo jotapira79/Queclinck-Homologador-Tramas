@@ -1,0 +1,340 @@
+name: "+RESP/+BUFF:GTERI"
+device: "GV350CEU"
+message_family: "ERI"
+encoding: "ASCII"
+delimiter: ","
+terminator: "$"
+
+version_field:
+  name: full_protocol_version
+  length_variant: [6, 7]
+  format: hex
+
+schema:
+  sections:
+    # =========================
+    # CABECERA (Siempre viene)
+    # =========================
+    - name: head
+      fields:
+        - { name: header, const_any: ["+RESP:GTERI", "+BUFF:GTERI"], type: string }
+        - { name: full_protocol_version, type: hex, length_variant: [6, 7] }
+        - { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$" }
+        - { name: device_name, type: string, max_length: 20 }
+
+    # ===================================
+    # CUERPO FIJO (Siempre viene en GTERI)
+    # ===================================
+    - name: body_fixed
+      fields:
+        # ---- Base fija de ERI ----
+        - { name: eri_mask, type: hex, length: 8 }
+        - { name: external_power_mv, type: int, min: 0, max: 32000, optional: true }
+        - { name: report_type, type: string, length: 2, pattern: "^[0-9A-Fa-f]{2}$" }
+        - { name: number, type: int, min: 1, max: 15 }
+        - { name: gnss_accuracy, type: int, min: 0, max: 500 }
+        - { name: speed_kmh, type: float, min: 0.0, max: 999.9 }
+        - { name: azimuth_deg, type: int, min: 0, max: 359 }
+        - { name: altitude_m, type: float, min: -1000.0, max: 30000.0, optional: true }
+        - { name: lat, type: float, min: -90.0, max: 90.0 }
+        - { name: lon, type: float, min: -180.0, max: 180.0 }
+        - { name: gnss_utc_time, type: datetime, format: "YYYYMMDDHHMMSS" }
+
+        # ---- Red celular (fijo) ----
+        - { name: mcc, type: string, length: 4, pattern: "^0[0-9]{3}$" }
+        - { name: mnc, type: string, length: 4, pattern: "^0[0-9]{3}$" }
+        - { name: lac_hex, type: hex, length: 4 }
+        - { name: cell_id_hex, type: hex, length_variant: [4, 8] }
+
+    # =======================================================
+    # CUERPO VARIABLE (Opcional / controla la longitud total)
+    # =======================================================
+    - name: body_variable
+      fields:
+        # ---- Máscara de append de posición (y dependientes) ----
+        - { name: position_append_mask, type: hex, length_variant: [2, 4], optional: true }
+
+        - name: satellites_in_use
+          type: int
+          min: 0
+          max: 72
+          optional: true
+          present_if: { mask_field: position_append_mask, bit: 0 }
+
+        - name: hdop
+          type: float
+          min: 0.0
+          max: 99.99
+          optional: true
+          present_if: { mask_field: position_append_mask, bit: 1 }
+
+        - name: vdop
+          type: float
+          min: 0.0
+          max: 99.99
+          optional: true
+          present_if: { mask_field: position_append_mask, bit: 2 }
+
+        - name: pdop
+          type: float
+          min: 0.0
+          max: 99.99
+          optional: true
+          present_if: { mask_field: position_append_mask, bit: 3 }
+
+        - name: gnss_trigger_type
+          type: int
+          min: 0
+          max: 9
+          optional: true
+          present_if_any:
+            - { mask_field: position_append_mask, bit: 1 }
+            - { mask_field: position_append_mask, bit: 2 }
+
+        - name: gnss_jamming_state
+          type: int
+          min: 0
+          max: 6
+          optional: true
+          present_if: { mask_field: position_append_mask, bit: 4 }
+
+        # ---- Contadores, entradas y estado (suelen venir vacíos si no aplican) ----
+        - { name: mileage_km, type: float, min: 0.0, max: 4294967.0, optional: true, allow_empty: true }
+        - { name: hour_meter, type: string, pattern: "^[0-9]{1,7}:[0-5][0-9]:[0-5][0-9]$", optional: true, allow_empty: true }
+        - { name: analog_in_1, type: float, min: 0.0, max: 30.0, optional: true, allow_empty: true }
+        - { name: analog_in_2, type: float, min: 0.0, max: 16.0, optional: true, allow_empty: true }
+        - { name: analog_in_3, type: float, min: 0.0, max: 16.0, optional: true, allow_empty: true }
+        - { name: backup_batt_percent, type: int, min: 0, max: 100, optional: true, allow_empty: true }
+        - { name: device_status, type: hex, length_variant: [6, 10], optional: true, allow_empty: true }
+        - { name: uart_device_type, type: int, min: 0, max: 7, optional: true, allow_empty: true }
+
+
+        # ===========================
+        # BLOQUES OPCIONALES AVANZADOS
+        # ===========================
+
+        # ---- Digital Fuel Sensor Data (ej. sensores digitales RS485/BLE) ----
+        - name: digital_fuel_count
+          type: int
+          min: 0
+          max: 8
+          optional: true
+
+        - name: digital_fuel_sensors
+          type: group_repeated
+          repeat: digital_fuel_count
+          optional: true
+          fields:
+            - { name: dfs_index, type: int, min: 0, max: 255 }
+            - { name: dfs_type, type: int, min: 0, max: 255, optional: true }
+            - { name: dfs_level_pct, type: float, min: 0, max: 100, optional: true }
+            - { name: dfs_temp_c, type: float, optional: true }
+            - { name: dfs_raw_hex, type: hex, max_length: 64, optional: true }
+
+        # ---- 1-Wire Data (iButton / Temp) ----
+        - name: one_wire_device_number
+          type: int
+          min: 0
+          max: 19
+          optional: true
+          default_if_absent: 0
+          present_if: { mask_field: eri_mask, bit: 1 }   # se muestra solo si el ERI Mask lo habilita
+
+        - name: one_wire_devices
+          type: group_repeated
+          repeat: one_wire_device_number
+          optional: true
+          enabled_if_any:
+            - { mask_field: eri_mask, bit: 1 }
+          fields:
+            - { name: one_wire_device_id,   type: hex,   length_variant: [16] }
+            - { name: one_wire_device_type, type: int,   min: 1, max: 99, optional: true }   # 1 = temp sensor (DS18B20)
+            - { name: one_wire_device_data, type: hex,   max_length: 40, optional: true }    # crudo; para tipo 1 es complemento a dos
+
+
+        # ---- CAN Data (FMS/J1939/OBD-II vía adaptador externo) ----
+        - name: can_append_mask
+          type: hex
+          length_variant: [2, 4, 8]
+          optional: true
+
+        - name: can_engine_rpm
+          type: int
+          min: 0
+          max: 20000
+          optional: true
+          present_if: { mask_field: can_append_mask, bit: 0 }
+
+        - name: can_vehicle_speed_kmh
+          type: float
+          min: 0
+          max: 300
+          optional: true
+          present_if: { mask_field: can_append_mask, bit: 1 }
+
+        - name: can_fuel_level_pct
+          type: float
+          min: 0
+          max: 100
+          optional: true
+          present_if: { mask_field: can_append_mask, bit: 2 }
+
+        - name: can_total_fuel_used_l
+          type: float
+          min: 0
+          max: 1000000
+          optional: true
+          present_if: { mask_field: can_append_mask, bit: 3 }
+
+        - name: can_coolant_temp_c
+          type: float
+          optional: true
+          present_if: { mask_field: can_append_mask, bit: 4 }
+
+        - name: can_raw_hex
+          type: hex
+          max_length: 128
+          optional: true
+          present_if_any:
+            - { field_present: can_append_mask }
+
+        # ---- Fuel Sensor Data (analógico/voltaje) ----
+        - name: fuel_sensor_count
+          type: int
+          min: 0
+          max: 4
+          optional: true
+
+        - name: fuel_sensors
+          type: group_repeated
+          repeat: fuel_sensor_count
+          optional: true
+          fields:
+            - { name: fs_index, type: int, min: 0, max: 255 }
+            - { name: fs_voltage_mv, type: int, min: 0, max: 32000, optional: true }
+            - { name: fs_level_pct, type: float, min: 0, max: 100, optional: true }
+            - { name: fs_temp_c, type: float, optional: true }
+            - { name: fs_raw_hex, type: hex, max_length: 64, optional: true }
+
+        # ---- RF433 Accessory Data (ej. tags/mandos 433MHz) ----
+        - name: rf433_count
+          type: int
+          min: 0
+          max: 16
+          optional: true
+
+        - name: rf433_accessories
+          type: group_repeated
+          repeat: rf433_count
+          optional: true
+          fields:
+            - { name: rf433_type, type: int, min: 0, max: 255 }
+            - { name: rf433_id_hex, type: hex, length_variant: [4, 8, 12], optional: true }
+            - { name: rf433_event, type: int, min: 0, max: 255, optional: true }
+            - { name: rf433_rssi_dbm, type: int, min: -120, max: 0, optional: true }
+            - { name: rf433_raw_hex, type: hex, max_length: 64, optional: true }
+
+        # ---- BLE (habilita bit 8 en eri_mask; mantenido) ----
+        - name: ble_count
+          type: int
+          min: 0
+          max: 25
+          optional: true
+          enabled_if_any:
+            - { mask_field: eri_mask, bit: 8 }
+
+        - name: ble_accessories
+          type: group_repeated
+          repeat: ble_count
+          optional: true
+          enabled_if_any:
+            - { mask_field: eri_mask, bit: 8 }
+          fields:
+            - { name: ble_index, type: string, pattern: "^[0-9A-Fa-f]{2}$" }
+            - { name: ble_type, type: int, min: 0, max: 255 }
+            - { name: ble_model, type: int, min: 0, max: 255, optional: true }
+            - { name: ble_raw, type: hex, max_length: 64, optional: true }
+            - { name: ble_append_mask, type: hex, length_variant: [2, 4, 8], optional: true }
+
+            - name: ble_name
+              type: string
+              max_length: 32
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 0 }
+
+            - name: ble_mac
+              type: hex
+              length: 12
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 1 }
+
+            - name: ble_status
+              type: int
+              min: 0
+              max: 3
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 2 }
+
+            - name: ble_batt_mv
+              type: int
+              min: 0
+              max: 5000
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 3 }
+
+            - name: ble_temp_c
+              type: float
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 4 }
+
+            - name: ble_humidity_pct
+              type: float
+              min: 0
+              max: 100
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 5 }
+
+            - name: ble_magnet_id
+              type: int
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 12 }
+
+            - name: ble_mag_event_counter
+              type: int
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 12 }
+
+            - name: ble_magnet_state
+              type: int
+              optional: true
+              present_if: { mask_field: ble_append_mask, bit: 12 }
+
+        # ---- RAT/Banda (habilita bit 13 en eri_mask) ----
+        - name: rat
+          type: int
+          min: 0
+          max: 255
+          optional: true
+          enabled_if_any:
+            - { mask_field: eri_mask, bit: 13 }
+
+        - name: band
+          type: string
+          max_length: 8
+          optional: true
+          present_if: { field_present: rat }
+
+    # =========================
+    # COLA (Siempre viene)
+    # =========================
+    - name: tail
+      fields:
+        - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS" }
+        - { name: count_hex, type: hex, length: 4 }
+
+validation:
+  rules:
+    - { name: header_and_message, assert: "(header in ['+RESP:GT', '+BUFF:GT']) and message == 'ERI'" }
+    - { name: terminator, assert: "line.endswith('$')" }
+    - { name: lat_lon_range, assert: "(-90.0 <= lat <= 90.0) and (-180.0 <= lon <= 180.0)" }
+    - { name: speed_azimuth_consistency, level: warn, assert: "not (speed_kmh == 0 and azimuth_deg not in [0, 360])" }
