@@ -132,13 +132,28 @@ def _safe_float(value: object) -> Optional[float]:
 def _safe_int(value: object) -> Optional[int]:
     if value in (None, ""):
         return None
-    try:
-        return int(str(value), 0)
-    except (TypeError, ValueError):
-        try:
-            return int(str(value).lstrip("0") or "0")
-        except ValueError:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if value != value:  # NaN check sin importar math.isnan
             return None
+        return int(value)
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    try:
+        return int(text, 10)
+    except ValueError:
+        try:
+            return int(text, 0)
+        except ValueError:
+            cleaned = text.lstrip("0").strip() or "0"
+            try:
+                return int(cleaned, 10)
+            except ValueError:
+                return None
 
 
 def _normalize_operator(mcc: Optional[int], mnc: Optional[int]) -> str:
