@@ -73,6 +73,7 @@ OPERATOR_COLORS = {
     "Entel": "#1f77b4",
     "Claro": "#ff7f0e",
     "Movistar": "#2ca02c",
+    "WOM": "#9467bd",
     "Desconocido": "#7f7f7f",
 }
 
@@ -149,6 +150,8 @@ def _normalize_operator(mcc: Optional[int], mnc: Optional[int]) -> str:
         return "Movistar"
     if mnc == 3:
         return "Claro"
+    if mnc == 9:
+        return "WOM"
     return "Desconocido"
 
 
