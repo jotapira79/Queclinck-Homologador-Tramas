@@ -157,7 +157,9 @@ def _safe_int(value: object) -> Optional[int]:
 
 
 def _normalize_operator(mcc: Optional[int], mnc: Optional[int]) -> str:
-    if mcc != 730:
+    if mnc is None:
+        return "Desconocido"
+    if mcc is not None and mcc != 730:
         return "Desconocido"
     if mnc == 1:
         return "Entel"
@@ -456,7 +458,9 @@ class OperatorLegend(MacroElement):
     def __init__(self, colors: Dict[str, str]):
         super().__init__()
         entries = []
-        for operator in ("Entel", "Claro", "Movistar"):
+        for operator in sorted(
+            key for key in colors.keys() if key.lower() != "desconocido"
+        ):
             color = colors.get(operator)
             if not color:
                 continue
