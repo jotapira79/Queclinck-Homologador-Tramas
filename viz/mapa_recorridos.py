@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -11,12 +11,15 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 try:  # pragma: no cover - dependencia opcional en tiempo de ejecución
     import folium
-    from folium import FeatureGroup, LayerControl, Map
-    from folium.plugins import FeatureGroupSubGroup
+    from folium import FeatureGroup, Map
+    from folium.plugins import GroupedLayerControl
 except ModuleNotFoundError as exc:  # pragma: no cover - entorno sin folium
     raise ModuleNotFoundError(
         "folium no está instalado. Ejecuta 'pip install folium pytz python-dateutil'"
     ) from exc
+
+from branca.element import MacroElement
+from jinja2 import Template
 
 from src.ingestors.sqlite_records import ensure_db
 
@@ -66,12 +69,11 @@ NETWORK_COLORS = {
     "Desconocida": "#7f7f7f",
 }
 
-SIGNAL_COLORS = {
-    "Pésima": "#d62728",
-    "Regular": "#ff9896",
-    "Buena": "#98df8a",
-    "Excelente": "#2ca02c",
-    "Desconocida": "#cccccc",
+OPERATOR_COLORS = {
+    "Entel": "#1f77b4",
+    "Claro": "#ff7f0e",
+    "Movistar": "#2ca02c",
+    "Desconocido": "#7f7f7f",
 }
 
 IMEI_CANDIDATES = ["imei", "unique_id", "uniqueid", "device_imei"]
@@ -271,8 +273,10 @@ def _load_locations_from_db(
 
     points: List[LocationPoint] = []
     for row in conn.execute(sql, (imei,)):
-        lat = _safe_float(row[lat_col])
-        lon = _safe_float(row[lon_col])
+        raw_lat = _safe_float(row[lat_col])
+        raw_lon = _safe_float(row[lon_col])
+        lat = raw_lon if raw_lon is not None else raw_lat
+        lon = raw_lat if raw_lat is not None else raw_lon
         dt = _parse_datetime(row[time_col])
         if lat is None or lon is None or dt is None:
             continue
@@ -430,6 +434,34 @@ def _point_to_tooltip(point: LocationPoint) -> str:
     return "<br>".join(parts)
 
 
+class OperatorLegend(MacroElement):
+    def __init__(self, colors: Dict[str, str]):
+        super().__init__()
+        entries = []
+        for operator in ("Entel", "Claro", "Movistar"):
+            color = colors.get(operator)
+            if not color:
+                continue
+            entries.append(
+                f'<div style="display:flex; align-items:center; margin-bottom:4px;">'
+                f'<span style="background:{color}; width:12px; height:12px; display:inline-block; '
+                f'margin-right:6px; border:1px solid #333;"></span>{operator}</div>'
+            )
+        entries_html = "".join(entries)
+        self._template = Template(
+            f"""
+            {{% macro html(this, kwargs) %}}
+            <div style="position: fixed; bottom: 40px; left: 40px; z-index: 9999; background-color: white;
+                        border: 1px solid #bbb; padding: 8px 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+                        border-radius: 4px; font-size: 13px;">
+                <div style="font-weight: bold; margin-bottom: 6px;">Operadores</div>
+                {entries_html}
+            </div>
+            {{% endmacro %}}
+            """
+        )
+
+
 def render_interactive_map(
     points: List[LocationPoint],
     output_html: Path,
@@ -445,49 +477,95 @@ def render_interactive_map(
     fmap = Map(location=(center_lat, center_lon), zoom_start=13, tiles=tiles)
 
     day_groups: Dict[str, FeatureGroup] = {}
-    subgroups: Dict[Tuple[str, str, str], FeatureGroup] = {}
-    layer_points: Dict[Tuple[str, str, str], List[Tuple[float, float]]] = defaultdict(list)
+    operator_groups: Dict[str, FeatureGroup] = {}
+    network_groups: Dict[str, FeatureGroup] = {}
+
+    day_coords: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
+    operator_coords: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
+    network_coords: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
+    day_operator_counts: Dict[str, Counter] = defaultdict(Counter)
 
     for point in points_sorted:
         day_label = point.send_time.date().isoformat()
-        network_label = point.network_label or "Desconocida"
         operator_label = point.operator or "Desconocido"
+        network_label = point.network_label or "Desconocida"
+        operator_color = OPERATOR_COLORS.get(operator_label, OPERATOR_COLORS["Desconocido"])
+
         day_group = day_groups.get(day_label)
         if day_group is None:
             day_group = FeatureGroup(name=f"Día {day_label}", overlay=True, show=True)
             day_group.add_to(fmap)
             day_groups[day_label] = day_group
 
-        layer_key = (day_label, network_label, operator_label)
-        subgroup_name = f"{day_label} | {network_label} | {operator_label}"
-        subgroup = subgroups.get(layer_key)
-        if subgroup is None:
-            subgroup = FeatureGroupSubGroup(day_group, name=subgroup_name, overlay=True, show=True)
-            subgroup.add_to(fmap)
-            subgroups[layer_key] = subgroup
+        operator_group = operator_groups.get(operator_label)
+        if operator_group is None:
+            operator_group = FeatureGroup(
+                name=f"Operador {operator_label}", overlay=True, show=True
+            )
+            operator_group.add_to(fmap)
+            operator_groups[operator_label] = operator_group
 
-        layer_points[layer_key].append((point.lat, point.lon))
-        border_color = NETWORK_COLORS.get(network_label, "#7f7f7f")
-        fill_color = SIGNAL_COLORS.get(point.signal_quality, "#cccccc")
-        folium.CircleMarker(
-            location=(point.lat, point.lon),
-            radius=6,
-            color=border_color,
-            weight=2,
-            fill=True,
-            fill_color=fill_color,
-            fill_opacity=0.85,
-            tooltip=_point_to_tooltip(point),
-        ).add_to(subgroup)
+        network_group = network_groups.get(network_label)
+        if network_group is None:
+            network_group = FeatureGroup(
+                name=f"Tecnología {network_label}", overlay=True, show=True
+            )
+            network_group.add_to(fmap)
+            network_groups[network_label] = network_group
 
-    for (day_label, network_label, operator_label), coords in layer_points.items():
+        tooltip = _point_to_tooltip(point)
+        for group in (day_group, operator_group, network_group):
+            folium.CircleMarker(
+                location=(point.lat, point.lon),
+                radius=6,
+                color=operator_color,
+                weight=2,
+                fill=True,
+                fill_color=operator_color,
+                fill_opacity=0.85,
+                tooltip=tooltip,
+            ).add_to(group)
+
+        day_coords[day_label].append((point.lat, point.lon))
+        operator_coords[operator_label].append((point.lat, point.lon))
+        network_coords[network_label].append((point.lat, point.lon))
+        day_operator_counts[day_label][operator_label] += 1
+
+    for day_label, coords in day_coords.items():
         if len(coords) < 2:
             continue
-        subgroup = subgroups[(day_label, network_label, operator_label)]
-        color = NETWORK_COLORS.get(network_label, "#7f7f7f")
-        folium.PolyLine(coords, color=color, weight=4, opacity=0.6).add_to(subgroup)
+        dominant_operator, _ = max(
+            day_operator_counts[day_label].items(), key=lambda item: item[1]
+        )
+        color = OPERATOR_COLORS.get(dominant_operator, OPERATOR_COLORS["Desconocido"])
+        folium.PolyLine(coords, color=color, weight=4, opacity=0.6).add_to(
+            day_groups[day_label]
+        )
 
-    LayerControl(collapsed=False).add_to(fmap)
+    for operator_label, coords in operator_coords.items():
+        if len(coords) < 2:
+            continue
+        color = OPERATOR_COLORS.get(operator_label, OPERATOR_COLORS["Desconocido"])
+        folium.PolyLine(coords, color=color, weight=4, opacity=0.6).add_to(
+            operator_groups[operator_label]
+        )
+
+    for network_label, coords in network_coords.items():
+        if len(coords) < 2:
+            continue
+        color = NETWORK_COLORS.get(network_label, "#7f7f7f")
+        folium.PolyLine(coords, color=color, weight=4, opacity=0.6).add_to(
+            network_groups[network_label]
+        )
+
+    grouped_layers = {
+        "Días": [day_groups[key] for key in sorted(day_groups.keys())],
+        "Operadores": [operator_groups[key] for key in sorted(operator_groups.keys())],
+        "Tecnologías": [network_groups[key] for key in sorted(network_groups.keys())],
+    }
+    GroupedLayerControl(grouped_layers, collapsed=False).add_to(fmap)
+
+    fmap.get_root().add_child(OperatorLegend(OPERATOR_COLORS))
     fmap.fit_bounds([(p.lat, p.lon) for p in points_sorted])
 
     _ensure_output_path(output_html)
