@@ -17,4 +17,9 @@ def test_safe_int_keeps_base_prefix_support():
 def test_normalize_operator_known_chile_carriers():
     assert _normalize_operator(730, 2) == "Movistar"
     assert _normalize_operator(730, 9) == "WOM"
+    assert _normalize_operator(None, 9) == "WOM"
     assert _normalize_operator(472, 9) == "Desconocido"
+
+
+def test_normalize_operator_requires_mnc():
+    assert _normalize_operator(730, None) == "Desconocido"
