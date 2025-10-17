@@ -9,9 +9,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-import folium
-from folium import FeatureGroup, LayerControl, Map
-from folium.plugins import FeatureGroupSubGroup
+try:  # pragma: no cover - dependencia opcional en tiempo de ejecución
+    import folium
+    from folium import FeatureGroup, LayerControl, Map
+    from folium.plugins import FeatureGroupSubGroup
+except ModuleNotFoundError as exc:  # pragma: no cover - entorno sin folium
+    raise ModuleNotFoundError(
+        "folium no está instalado. Ejecuta 'pip install folium pytz python-dateutil'"
+    ) from exc
 
 from src.ingestors.sqlite_records import ensure_db
 
