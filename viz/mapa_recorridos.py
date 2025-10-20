@@ -139,6 +139,18 @@ def _require_folium() -> None:
     if _FOLIUM_IMPORT_ERROR is not None:
         raise _FOLIUM_IMPORT_ERROR
 
+def _normalized_imei_value(value: str) -> str:
+    return "".join(ch for ch in str(value).strip() if ch.isalnum())
+
+
+def _normalized_imei_expression(column: str) -> str:
+    base = f'trim(CAST("{column}" AS TEXT))'
+    without_breaks = (
+        f"replace(replace(replace(replace({base}, char(10), ''), char(13), ''), char(9), ''), ' ', '')"
+    )
+    return f"replace({without_breaks}, '-', '')"
+
+
 # Lectura de datos -----------------------------------------------------------
 
 def _load_locations_from_db(
@@ -197,11 +209,16 @@ def _load_locations_from_db(
             query_cols.add(operator_col)
         query_cols.add("report_type") if "report_type" in columns else None
 
+        imei_expr = _normalized_imei_expression(imei_col)
         select_clause = ", ".join(f'"{col}"' for col in query_cols)
-        sql = f'SELECT {select_clause} FROM "{table}" WHERE "{imei_col}" = ? ORDER BY "{time_col}"'
+        sql = (
+            f'SELECT {select_clause} FROM "{table}" '
+            f"WHERE {imei_expr} = ? ORDER BY \"{time_col}\""
+        )
 
         points: List[LocationPoint] = []
-        for row in conn.execute(sql, (imei,)):
+        normalized_imei = _normalized_imei_value(imei)
+        for row in conn.execute(sql, (normalized_imei,)):
             raw_lat = _safe_float(row[lat_col])
             raw_lon = _safe_float(row[lon_col])
             dt = _parse_datetime(row[time_col])
@@ -288,11 +305,16 @@ def _load_gtinf_records(db_path: Path, model: str, imei: str) -> List[InfoRecord
     if ber_col:
         query_cols.add(ber_col)
 
+    imei_expr = _normalized_imei_expression(imei_col)
     select_clause = ", ".join(f'"{col}"' for col in query_cols)
-    sql = f'SELECT {select_clause} FROM "{table}" WHERE "{imei_col}" = ? ORDER BY "{time_col}"'
+    sql = (
+        f'SELECT {select_clause} FROM "{table}" '
+        f"WHERE {imei_expr} = ? ORDER BY \"{time_col}\""
+    )
 
+    normalized_imei = _normalized_imei_value(imei)
     info_records: List[InfoRecord] = []
-    for row in conn.execute(sql, (imei,)):
+    for row in conn.execute(sql, (normalized_imei,)):
         dt = _parse_datetime(row[time_col])
         if dt is None:
             continue
