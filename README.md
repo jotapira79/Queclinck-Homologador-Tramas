@@ -124,6 +124,11 @@ Características destacadas:
 - Capas independientes por operador, tecnología y día.
 - Tooltips con IMEI, coordenadas, reporte origen, tecnología, clasificación de señal y valores
   de CSQ/BER cuando estén presentes.
+- Corrección automática de coordenadas cuando los reportes invierten latitud/longitud, incluso
+  si la trama no incluye códigos MCC.
+- Los recorridos y filtros se construyen exclusivamente a partir de las bases enriquecidas
+  `<reporte>_<modelo>_map.db`, que ahora incluyen una columna `operador` con el nombre del
+  carrier normalizado (Entel, Movistar, Claro, WOM o Desconocido).
 - Filtros `--day`, `--operator`, `--network` y `--report`, todos compatibles con la palabra
   clave `All` para desactivar la restricción.
 

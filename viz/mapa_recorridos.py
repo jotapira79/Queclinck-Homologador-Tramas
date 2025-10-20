@@ -13,13 +13,31 @@ try:  # pragma: no cover - dependencia opcional en tiempo de ejecución
     import folium
     from folium import FeatureGroup, Map
     from folium.plugins import GroupedLayerControl
+    _FOLIUM_IMPORT_ERROR: ModuleNotFoundError | None = None
 except ModuleNotFoundError as exc:  # pragma: no cover - entorno sin folium
-    raise ModuleNotFoundError(
+    folium = None  # type: ignore[assignment]
+    FeatureGroup = Map = GroupedLayerControl = None  # type: ignore[assignment]
+    _FOLIUM_IMPORT_ERROR = ModuleNotFoundError(
         "folium no está instalado. Ejecuta 'pip install folium pytz python-dateutil'"
-    ) from exc
+    )
 
-from branca.element import MacroElement
-from jinja2 import Template
+try:  # pragma: no cover - dependencia opcional
+    from branca.element import MacroElement
+except ModuleNotFoundError:  # pragma: no cover - entorno sin branca
+    MacroElement = object  # type: ignore[assignment]
+    if '_FOLIUM_IMPORT_ERROR' in globals() and _FOLIUM_IMPORT_ERROR is None:
+        _FOLIUM_IMPORT_ERROR = ModuleNotFoundError(
+            "branca no está instalado. Ejecuta 'pip install folium pytz python-dateutil'"
+        )
+
+try:  # pragma: no cover - dependencia opcional
+    from jinja2 import Template
+except ModuleNotFoundError:  # pragma: no cover - entorno sin jinja2
+    Template = None  # type: ignore[assignment]
+    if '_FOLIUM_IMPORT_ERROR' in globals() and _FOLIUM_IMPORT_ERROR is None:
+        _FOLIUM_IMPORT_ERROR = ModuleNotFoundError(
+            "jinja2 no está instalado. Ejecuta 'pip install folium pytz python-dateutil'"
+        )
 
 from src.ingestors.sqlite_records import ensure_db
 
@@ -91,6 +109,36 @@ OPERATOR_COLORS = {
     "Desconocido": "#7f7f7f",
 }
 
+# Utilidades internas --------------------------------------------------------
+
+
+def _valid_coordinates(lat: float, lon: float) -> bool:
+    return -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0
+
+
+def _swap_coordinates_if_needed(
+    lat: float, lon: float, mcc: Optional[int]
+) -> Tuple[float, float]:
+    candidate_lat, candidate_lon = lon, lat
+    swap_valid = _valid_coordinates(candidate_lat, candidate_lon)
+
+    if abs(lat) > 90.0 and abs(lon) <= 90.0 and swap_valid:
+        return candidate_lat, candidate_lon
+
+    if mcc == 730 and abs(lat) > 60.0 and abs(lon) < 80.0 and swap_valid:
+        return candidate_lat, candidate_lon
+
+    if abs(lat) > 60.0 and swap_valid and not (-60.0 <= lat <= 60.0):
+        if -60.0 <= candidate_lat <= 60.0:
+            return candidate_lat, candidate_lon
+
+    return lat, lon
+
+
+def _require_folium() -> None:
+    if _FOLIUM_IMPORT_ERROR is not None:
+        raise _FOLIUM_IMPORT_ERROR
+
 # Lectura de datos -----------------------------------------------------------
 
 def _load_locations_from_db(
@@ -128,6 +176,7 @@ def _load_locations_from_db(
         tech_col = "tecnologia_celular" if "tecnologia_celular" in columns else None
         quality_col = "calidad_senal" if "calidad_senal" in columns else None
         dbm_col = "nivel_senal_dbm" if "nivel_senal_dbm" in columns else None
+        operator_col = "operador" if "operador" in columns else None
 
         query_cols = {lat_col, lon_col, time_col, imei_col}
         if mcc_col:
@@ -144,6 +193,8 @@ def _load_locations_from_db(
             query_cols.add(quality_col)
         if dbm_col:
             query_cols.add(dbm_col)
+        if operator_col:
+            query_cols.add(operator_col)
         query_cols.add("report_type") if "report_type" in columns else None
 
         select_clause = ", ".join(f'"{col}"' for col in query_cols)
@@ -158,19 +209,17 @@ def _load_locations_from_db(
                 continue
             mcc = _safe_int(row[mcc_col]) if mcc_col else None
             mnc = _safe_int(row[mnc_col]) if mnc_col else None
-            lat, lon = raw_lat, raw_lon
-            if abs(lat) > 90 and abs(raw_lon) <= 90:
-                lat, lon = raw_lon, raw_lat
-            elif (
-                mcc == 730
-                and abs(lat) > 60
-                and 20 <= abs(lon) < 60
-            ):
-                lat, lon = lon, lat
+            lat, lon = _swap_coordinates_if_needed(raw_lat, raw_lon, mcc)
             if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
                 continue
 
-            operator = _normalize_operator(mcc, mnc)
+            operator = ""
+            if operator_col:
+                raw_operator = row[operator_col]
+                if raw_operator not in (None, ""):
+                    operator = str(raw_operator).strip()
+            if not operator:
+                operator = _normalize_operator(mcc, mnc)
             network_label = "Desconocida"
             if tech_col:
                 raw_tech = row[tech_col]
@@ -402,6 +451,7 @@ def render_interactive_map(
     *,
     tiles: str = "OpenStreetMap",
 ) -> None:
+    _require_folium()
     if not points:
         raise ValueError("No hay puntos para representar en el mapa")
 

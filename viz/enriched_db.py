@@ -14,6 +14,8 @@ from .utils import (
     CSQ_BER_CANDIDATES,
     CSQ_CANDIDATES,
     IMEI_CANDIDATES,
+    MCC_CANDIDATES,
+    MNC_CANDIDATES,
     NETWORK_TYPE_CANDIDATES,
     NETWORK_TYPE_MAP,
     TIME_CANDIDATES,
@@ -21,6 +23,7 @@ from .utils import (
     detect_table,
     first_existing,
     load_table_schema,
+    normalize_operator,
     parse_datetime,
     safe_float,
     safe_int,
@@ -121,6 +124,7 @@ def ensure_enriched_database(*, report: str, model: str, base_dir: Path | str) -
             _ensure_column(conn, table, "tecnologia_celular", "TEXT")
             _ensure_column(conn, table, "calidad_senal", "TEXT")
             _ensure_column(conn, table, "nivel_senal_dbm", "REAL")
+            _ensure_column(conn, table, "operador", "TEXT")
 
             columns = load_table_schema(conn, table)
             imei_col = first_existing(IMEI_CANDIDATES, columns)
@@ -132,48 +136,70 @@ def ensure_enriched_database(*, report: str, model: str, base_dir: Path | str) -
                 f'UPDATE "{table}" SET "tecnologia_celular" = "Desconocida", '
                 '"calidad_senal" = "Desconocida", "nivel_senal_dbm" = NULL'
             )
+            conn.execute(f'UPDATE "{table}" SET "operador" = "Desconocido"')
 
             gtinf_lookup = _load_gtinf_lookup(gtinf_path, model_clean)
             if not gtinf_lookup:
                 conn.commit()
-                return output_path
-
-            select_sql = (
-                f'SELECT ROWID as __rowid__, "{imei_col}" as imei_value, '
-                f'"{time_col}" as send_value FROM "{table}" ORDER BY "{time_col}"'
-            )
-            updates: List[Tuple[str, str, Optional[float], int]] = []
-            positions: Dict[str, int] = defaultdict(int)
-
-            for row in conn.execute(select_sql):
-                imei_val = row["imei_value"]
-                imei = str(imei_val).strip() if imei_val not in (None, "") else None
-                if not imei:
-                    continue
-                send_dt = parse_datetime(row["send_value"])
-                if send_dt is None:
-                    continue
-                infos = gtinf_lookup.get(imei)
-                if not infos:
-                    continue
-                idx = positions.get(imei, 0)
-                while idx < len(infos) and infos[idx][0] <= send_dt:
-                    idx += 1
-                positions[imei] = idx
-                if idx == 0:
-                    continue
-                latest = infos[idx - 1]
-                network_label = latest[1]
-                signal_quality = latest[2]
-                signal_dbm = latest[3]
-                updates.append((network_label, signal_quality, signal_dbm, row["__rowid__"]))
-
-            if updates:
-                conn.executemany(
-                    f'UPDATE "{table}" SET "tecnologia_celular" = ?, '
-                    f'"calidad_senal" = ?, "nivel_senal_dbm" = ? WHERE ROWID = ?',
-                    updates,
+            else:
+                select_sql = (
+                    f'SELECT ROWID as __rowid__, "{imei_col}" as imei_value, '
+                    f'"{time_col}" as send_value FROM "{table}" ORDER BY "{time_col}"'
                 )
+                updates: List[Tuple[str, str, Optional[float], int]] = []
+                positions: Dict[str, int] = defaultdict(int)
+
+                for row in conn.execute(select_sql):
+                    imei_val = row["imei_value"]
+                    imei = str(imei_val).strip() if imei_val not in (None, "") else None
+                    if not imei:
+                        continue
+                    send_dt = parse_datetime(row["send_value"])
+                    if send_dt is None:
+                        continue
+                    infos = gtinf_lookup.get(imei)
+                    if not infos:
+                        continue
+                    idx = positions.get(imei, 0)
+                    while idx < len(infos) and infos[idx][0] <= send_dt:
+                        idx += 1
+                    positions[imei] = idx
+                    if idx == 0:
+                        continue
+                    latest = infos[idx - 1]
+                    network_label = latest[1]
+                    signal_quality = latest[2]
+                    signal_dbm = latest[3]
+                    updates.append((network_label, signal_quality, signal_dbm, row["__rowid__"]))
+
+                if updates:
+                    conn.executemany(
+                        f'UPDATE "{table}" SET "tecnologia_celular" = ?, '
+                        f'"calidad_senal" = ?, "nivel_senal_dbm" = ? WHERE ROWID = ?',
+                        updates,
+                    )
+
+            # Actualizamos el operador utilizando MCC/MNC
+            columns = load_table_schema(conn, table)
+            mcc_col = first_existing(MCC_CANDIDATES, columns)
+            mnc_col = first_existing(MNC_CANDIDATES, columns)
+            if mnc_col:
+                select_sql = (
+                    f'SELECT ROWID as __rowid__, '
+                    f'"{mcc_col}" as mcc_value, "{mnc_col}" as mnc_value '
+                    f'FROM "{table}"'
+                )
+                operator_updates: List[Tuple[str, int]] = []
+                for row in conn.execute(select_sql):
+                    mcc = safe_int(row["mcc_value"]) if mcc_col else None
+                    mnc = safe_int(row["mnc_value"])
+                    operator = normalize_operator(mcc, mnc)
+                    operator_updates.append((operator, row["__rowid__"]))
+                if operator_updates:
+                    conn.executemany(
+                        f'UPDATE "{table}" SET "operador" = ? WHERE ROWID = ?',
+                        operator_updates,
+                    )
             conn.commit()
         finally:
             conn.close()
