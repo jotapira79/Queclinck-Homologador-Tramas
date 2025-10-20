@@ -2,8 +2,9 @@
 
 Esta guía describe la nueva vista que combina los reportes de ubicación (`GTERI`/`GTFRI`)
 con los reportes informativos (`GTINF`) para enriquecer un mapa interactivo por IMEI.
-El proceso trabaja **solo en memoria** a partir de las bases SQLite generadas por el
-homologador; no modifica ninguna de las bases existentes.
+Para cada modelo se genera una base auxiliar `<reporte>_<modelo>_map.db` que replica los
+registros originales e incorpora las columnas `tecnologia_celular`, `calidad_senal` y
+`nivel_senal_dbm`. Las bases originales del homologador permanecen inalteradas.
 
 ## Requisitos previos
 
@@ -23,8 +24,8 @@ homologador; no modifica ninguna de las bases existentes.
    por `send_time`.
 3. **Enriquecimiento**: cada punto de recorrido adopta la tecnología (`network_type`) y
    la intensidad de señal (`csq`, `ber`) del **último GTINF cuyo `send_time` sea menor o
-   igual** al del punto. Si no existe un GTINF anterior, el punto se marca como
-   "Desconocida".
+   igual** al del punto. El resultado se guarda en la base auxiliar mencionada.
+   Si no existe un GTINF anterior, el punto se marca como "Desconocida".
 4. **Clasificación**: la señal se traduce a dBm y se clasifica como Pésima/Regular/Buena/
    Excelente según los umbrales definidos para 2G/3G/4G.
 
@@ -71,8 +72,10 @@ El HTML generado se almacena como `mapa_<modelo>_<imei>.html` en el directorio i
 
 ## Consideraciones
 
-- La fusión se realiza cada vez que se genera el mapa; no persiste ningún cambio en las
-  bases SQLite.
+- La base `<reporte>_<modelo>_map.db` se regenera automáticamente si cambia la fecha de
+  modificación de `gteri_<modelo>.db`, `gtfri_<modelo>.db` o `gtinf_<modelo>.db`.
+- Las columnas calculadas (`tecnologia_celular`, `calidad_senal`, `nivel_senal_dbm`) se
+  utilizan para los filtros del mapa y se completan con la última medición GTINF previa.
 - Si no se encuentra un GTINF anterior para un punto, este se conserva con tecnología y
   señal "Desconocida".
 - Los umbrales de clasificación pueden ajustarse en `viz/mapa_recorridos.py` si fuese

@@ -1,10 +1,14 @@
+import sqlite3
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 pytest.importorskip("folium")
 
 from viz.mapa_recorridos import (
+    build_points,
+    render_interactive_map,
     InfoRecord,
     LocationPoint,
     _associate_info,
@@ -12,6 +16,7 @@ from viz.mapa_recorridos import (
     _normalize_operator,
     _safe_int,
 )
+from viz.enriched_db import ensure_enriched_database
 
 
 def test_safe_int_parses_leading_zero_decimal():
@@ -59,6 +64,49 @@ def _make_info(offset_seconds: int, *, label: str, csq: float, csq_ber: int | No
     )
 
 
+def _prepare_sample_databases(tmp_path: Path) -> Path:
+    model = "gv350ceu"
+    imei = "123456789012345"
+    base_dir = tmp_path
+
+    gteri_path = base_dir / f"gteri_{model}.db"
+    conn = sqlite3.connect(gteri_path)
+    conn.execute(
+        f'CREATE TABLE "gteri_{model}" ('
+        'imei TEXT, send_time TEXT, lat REAL, lon REAL, mcc TEXT, mnc TEXT)'
+    )
+    conn.executemany(
+        f'INSERT INTO "gteri_{model}" (imei, send_time, lat, lon, mcc, mnc) '
+        'VALUES (?, ?, ?, ?, ?, ?)',
+        [
+            (imei, "202510100000", -33.45, -70.66, "0730", "0002"),
+            (imei, "202510100020", -33.46, -70.65, "0730", "0002"),
+            (imei, "202510100120", -33.47, -70.64, "0730", "0002"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    gtinf_path = base_dir / f"gtinf_{model}.db"
+    conn = sqlite3.connect(gtinf_path)
+    conn.execute(
+        f'CREATE TABLE "gtinf_{model}" ('
+        'imei TEXT, send_time TEXT, network_type INTEGER, csq REAL, csq_ber INTEGER)'
+    )
+    conn.executemany(
+        f'INSERT INTO "gtinf_{model}" (imei, send_time, network_type, csq, csq_ber) '
+        'VALUES (?, ?, ?, ?, ?)',
+        [
+            (imei, "202510100000", 3, 160, None),
+            (imei, "202510100100", 1, 12, None),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    return base_dir
+
+
 def test_associate_info_uses_latest_previous_record():
     points = [
         _make_point(0),
@@ -104,3 +152,71 @@ def test_filter_points_accepts_all_keyword_for_every_filter():
     assert _filter_points(points, operators=["All"]) == points
     assert _filter_points(points, networks=["ALL"]) == points
     assert _filter_points(points, day="all") == points
+
+
+def test_enriched_database_creates_columns_and_values(tmp_path: Path):
+    base_dir = _prepare_sample_databases(tmp_path)
+
+    enriched_path = ensure_enriched_database(
+        report="gteri", model="gv350ceu", base_dir=base_dir
+    )
+    assert enriched_path.exists()
+
+    conn = sqlite3.connect(enriched_path)
+    try:
+        rows = conn.execute(
+            'SELECT tecnologia_celular, calidad_senal, nivel_senal_dbm '
+            'FROM "gteri_gv350ceu" ORDER BY send_time'
+        ).fetchall()
+    finally:
+        conn.close()
+
+    tecnologias = [row[0] for row in rows]
+    calidades = [row[1] for row in rows]
+    niveles = [row[2] for row in rows]
+
+    assert tecnologias == ["4G", "4G", "2G"]
+    assert calidades == ["Excelente", "Excelente", "Buena"]
+    assert niveles[0] == pytest.approx(20.0)
+    assert niveles[2] == pytest.approx(-89.0)
+
+
+def test_build_points_uses_enriched_database(tmp_path: Path):
+    base_dir = _prepare_sample_databases(tmp_path)
+    # Genera la base enriquecida y asegura reutilización posterior
+    ensure_enriched_database(report="gteri", model="gv350ceu", base_dir=base_dir)
+
+    points = build_points(
+        model="gv350ceu",
+        imei="123456789012345",
+        base_dir=base_dir,
+        reports=["gteri"],
+    )
+
+    assert len(points) == 3
+    assert [p.network_label for p in points] == ["4G", "4G", "2G"]
+    assert [p.signal_quality for p in points] == ["Excelente", "Excelente", "Buena"]
+    assert [p.operator for p in points] == ["Movistar"] * 3
+    assert points[0].lat == pytest.approx(-33.45)
+    assert points[0].lon == pytest.approx(-70.66)
+
+
+def test_render_interactive_map_includes_all_filters(tmp_path: Path):
+    pytest.importorskip("folium")
+    base_dir = _prepare_sample_databases(tmp_path)
+    ensure_enriched_database(report="gteri", model="gv350ceu", base_dir=base_dir)
+
+    points = build_points(
+        model="gv350ceu",
+        imei="123456789012345",
+        base_dir=base_dir,
+        reports=["gteri"],
+    )
+
+    output_html = tmp_path / "mapa.html"
+    render_interactive_map(points, output_html)
+
+    html = output_html.read_text(encoding="utf-8")
+    assert "Todos los días" in html
+    assert "Operador Movistar" in html
+    assert "Tecnología 4G" in html
