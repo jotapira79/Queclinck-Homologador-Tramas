@@ -262,63 +262,65 @@ def _load_locations_from_db(
 
     conn = ensure_db(db_path)
     conn.row_factory = sqlite3.Row
-    table = _detect_table(conn, report, model)
-    columns = _load_table_schema(conn, table)
+    try:
+        table = _detect_table(conn, report, model)
+        columns = _load_table_schema(conn, table)
 
-    imei_col = _first_existing(IMEI_CANDIDATES, columns)
-    if not imei_col:
-        raise ValueError(f"La tabla {table} no contiene columna IMEI reconocida")
+        imei_col = _first_existing(IMEI_CANDIDATES, columns)
+        if not imei_col:
+            raise ValueError(f"La tabla {table} no contiene columna IMEI reconocida")
 
-    lat_col = _first_existing(LAT_CANDIDATES, columns)
-    lon_col = _first_existing(LON_CANDIDATES, columns)
-    if not lat_col or not lon_col:
-        raise ValueError(f"La tabla {table} no contiene columnas de latitud/longitud")
+        lat_col = _first_existing(LAT_CANDIDATES, columns)
+        lon_col = _first_existing(LON_CANDIDATES, columns)
+        if not lat_col or not lon_col:
+            return []
 
-    time_col = _first_existing(TIME_CANDIDATES, columns)
-    if not time_col:
-        raise ValueError(f"La tabla {table} no contiene columna send_time")
+        time_col = _first_existing(TIME_CANDIDATES, columns)
+        if not time_col:
+            raise ValueError(f"La tabla {table} no contiene columna send_time")
 
-    mcc_col = _first_existing(MCC_CANDIDATES, columns)
-    mnc_col = _first_existing(MNC_CANDIDATES, columns)
+        mcc_col = _first_existing(MCC_CANDIDATES, columns)
+        mnc_col = _first_existing(MNC_CANDIDATES, columns)
 
-    query_cols = {lat_col, lon_col, time_col, imei_col}
-    if mcc_col:
-        query_cols.add(mcc_col)
-    if mnc_col:
-        query_cols.add(mnc_col)
-    query_cols.add("report_type") if "report_type" in columns else None
+        query_cols = {lat_col, lon_col, time_col, imei_col}
+        if mcc_col:
+            query_cols.add(mcc_col)
+        if mnc_col:
+            query_cols.add(mnc_col)
+        query_cols.add("report_type") if "report_type" in columns else None
 
-    select_clause = ", ".join(f'"{col}"' for col in query_cols)
-    sql = f'SELECT {select_clause} FROM "{table}" WHERE "{imei_col}" = ? ORDER BY "{time_col}"'
+        select_clause = ", ".join(f'"{col}"' for col in query_cols)
+        sql = f'SELECT {select_clause} FROM "{table}" WHERE "{imei_col}" = ? ORDER BY "{time_col}"'
 
-    points: List[LocationPoint] = []
-    for row in conn.execute(sql, (imei,)):
-        raw_lat = _safe_float(row[lat_col])
-        raw_lon = _safe_float(row[lon_col])
-        lat = raw_lon if raw_lon is not None else raw_lat
-        lon = raw_lat if raw_lat is not None else raw_lon
-        dt = _parse_datetime(row[time_col])
-        if lat is None or lon is None or dt is None:
-            continue
-        mcc = _safe_int(row[mcc_col]) if mcc_col else None
-        mnc = _safe_int(row[mnc_col]) if mnc_col else None
-        operator = _normalize_operator(mcc, mnc)
-        raw_payload = {col: row[col] for col in row.keys()}
-        points.append(
-            LocationPoint(
-                lat=lat,
-                lon=lon,
-                send_time=dt,
-                imei=imei,
-                source=report.lower(),
-                operator=operator,
-                mcc=mcc,
-                mnc=mnc,
-                raw_payload=raw_payload,
+        points: List[LocationPoint] = []
+        for row in conn.execute(sql, (imei,)):
+            raw_lat = _safe_float(row[lat_col])
+            raw_lon = _safe_float(row[lon_col])
+            lat = raw_lat if raw_lat is not None else raw_lon
+            lon = raw_lon if raw_lon is not None else raw_lat
+            dt = _parse_datetime(row[time_col])
+            if lat is None or lon is None or dt is None:
+                continue
+            mcc = _safe_int(row[mcc_col]) if mcc_col else None
+            mnc = _safe_int(row[mnc_col]) if mnc_col else None
+            operator = _normalize_operator(mcc, mnc)
+            raw_payload = {col: row[col] for col in row.keys()}
+            points.append(
+                LocationPoint(
+                    lat=lat,
+                    lon=lon,
+                    send_time=dt,
+                    imei=imei,
+                    source=report.lower(),
+                    operator=operator,
+                    mcc=mcc,
+                    mnc=mnc,
+                    raw_payload=raw_payload,
+                )
             )
-        )
-    conn.close()
-    return points
+        return points
+    finally:
+        conn.close()
 
 
 def _load_gtinf_records(db_path: Path, model: str, imei: str) -> List[InfoRecord]:
