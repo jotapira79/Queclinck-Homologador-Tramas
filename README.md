@@ -113,45 +113,32 @@ Para más ejemplos y capturas de pantalla revisa `docs/viz/mapas.md`.
 
 ## Mapas interactivos por IMEI y operador
 
-El script `generate_map.py` construye mapas dinámicos por IMEI combinando la
-información de las bases `gteri_<modelo>.db`, `gtfri_<modelo>.db` y
-`gtinf_<modelo>.db`. Cada punto se vincula con la información de red más
-próxima (`network_type`, `csq/ber`) para colorear el recorrido según la
-tecnología y la calidad de señal. Además, se agregan controles para filtrar por
-operador, tecnología (2G/3G/4G) y día (`send_time`).
+La funcionalidad descrita en `docs/viz/mapa_recorridos_por_imei.md` genera un mapa HTML
+que combina los reportes de posición (`GTERI`/`GTFRI`) con la información de red (`GTINF`).
+Cada punto adopta la última medición `GTINF` cuyo `send_time` sea menor o igual, por lo que
+los tramos del recorrido heredan la tecnología (2G/3G/4G) y la calidad de señal asociadas a
+la red disponible en ese instante.
 
-### Ejecución rápida
+Características destacadas:
+
+- Capas independientes por operador, tecnología y día.
+- Tooltips con IMEI, coordenadas, reporte origen, tecnología, clasificación de señal y valores
+  de CSQ/BER cuando estén presentes.
+- Filtros `--day`, `--operator`, `--network` y `--report`, todos compatibles con la palabra
+  clave `All` para desactivar la restricción.
+
+Ejecución básica:
 
 ```bash
 python generate_map.py \
   --model gv350ceu \
   --imei 862524060869597 \
-  --report gteri \
   --db-dir bases_sqlite \
   --out-dir mapas
 ```
 
-El comando genera un archivo `mapa_<modelo>_<imei>.html` en el directorio de
-salida (`mapas/mapa_gv350ceu_862524060869597.html` en el ejemplo).
-
-### Filtros disponibles
-
-- `--day YYYY-MM-DD`: limita el mapa a un día específico (comparando con
-  `send_time`).
-- `--operator <Claro|Movistar|Entel>`: filtra por operador; acepta múltiples
-  valores repitiendo el flag.
-- `--network <2G|3G|4G>`: restringe la visualización a una o varias
-  tecnologías.
-- `--report gteri|gtfri`: selecciona la fuente de coordenadas a usar (por
-  defecto mezcla ambas).
-
-El HTML resultante permite activar/desactivar capas por día, operador y
-tecnología, y cada marcador muestra un tooltip con la intensidad de señal
-estimada (RSSI/RSRP en dBm, CSQ y BER cuando corresponde).
-
-### Ejemplo de salida
-
-![Mapa interactivo por IMEI](docs/viz/img/ejemplo.svg)
+Consulta la guía completa para más ejemplos, la explicación del algoritmo de fusión y las
+consideraciones de uso.
 
 ## Pruebas
 
