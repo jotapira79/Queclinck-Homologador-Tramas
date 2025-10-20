@@ -585,11 +585,16 @@ def build_points(
     searched_paths: List[Path] = []
     for report in reports_to_use:
         db_path = base_dir / f"{report}_{model_clean}.db"
-        enriched_path = ensure_enriched_database(
-            report=report,
-            model=model_clean,
-            base_dir=base_dir,
-        )
+        try:
+            enriched_path = ensure_enriched_database(
+                report=report,
+                model=model_clean,
+                base_dir=base_dir,
+            )
+        except FileNotFoundError:
+            searched_paths.append(db_path)
+            continue
+
         searched_paths.append(enriched_path)
         points = _load_locations_from_db(enriched_path, report, model_clean, imei)
         all_points.extend(points)
