@@ -23,6 +23,28 @@ from jinja2 import Template
 
 from src.ingestors.sqlite_records import ensure_db
 
+from .enriched_db import ensure_enriched_database
+from .utils import (
+    CSQ_BER_CANDIDATES,
+    CSQ_CANDIDATES,
+    IMEI_CANDIDATES,
+    LAT_CANDIDATES,
+    LON_CANDIDATES,
+    MCC_CANDIDATES,
+    MNC_CANDIDATES,
+    NETWORK_TYPE_CANDIDATES,
+    NETWORK_TYPE_MAP,
+    TIME_CANDIDATES,
+    classify_signal as _classify_signal,
+    detect_table as _detect_table,
+    first_existing as _first_existing,
+    load_table_schema as _load_table_schema,
+    normalize_operator as _normalize_operator,
+    parse_datetime as _parse_datetime,
+    safe_float as _safe_float,
+    safe_int as _safe_int,
+)
+
 # Tipos auxiliares -----------------------------------------------------------
 
 
@@ -53,14 +75,6 @@ class InfoRecord:
     csq: Optional[float] = None
     csq_ber: Optional[int] = None
 
-
-NETWORK_TYPE_MAP = {
-    0: "Sin servicio",
-    1: "2G",
-    2: "3G",
-    3: "4G",
-}
-
 NETWORK_COLORS = {
     "2G": "#1f77b4",
     "3G": "#ff7f0e",
@@ -77,179 +91,7 @@ OPERATOR_COLORS = {
     "Desconocido": "#7f7f7f",
 }
 
-IMEI_CANDIDATES = ["imei", "unique_id", "uniqueid", "device_imei"]
-LAT_CANDIDATES = [
-    "lat",
-    "latitude",
-    "latitude_deg",
-    "lat_decimal",
-    "lat_deg",
-]
-LON_CANDIDATES = [
-    "lon",
-    "longitude",
-    "longitude_deg",
-    "lon_decimal",
-    "lon_deg",
-]
-TIME_CANDIDATES = ["send_time", "gnss_utc_time", "timestamp", "created_at"]
-MCC_CANDIDATES = ["mcc", "mobile_country_code"]
-MNC_CANDIDATES = ["mnc", "mobile_network_code"]
-CSQ_CANDIDATES = ["csq", "csq_rssi", "csq_rsrp", "lte_csq"]
-CSQ_BER_CANDIDATES = ["csq_ber", "ber"]
-NETWORK_TYPE_CANDIDATES = ["network_type", "rat", "network"]
-
-
-# Utilidades de parsing ------------------------------------------------------
-
-
-def _parse_datetime(value: object) -> Optional[datetime]:
-    if value in (None, ""):
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    for fmt in ("%Y%m%d%H%M%S", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S"):
-        try:
-            return datetime.strptime(text, fmt)
-        except ValueError:
-            continue
-    try:
-        return datetime.fromisoformat(text)
-    except ValueError:
-        return None
-
-
-def _safe_float(value: object) -> Optional[float]:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _safe_int(value: object) -> Optional[int]:
-    if value in (None, ""):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        if value != value:  # NaN check sin importar math.isnan
-            return None
-        return int(value)
-
-    text = str(value).strip()
-    if not text:
-        return None
-
-    try:
-        return int(text, 10)
-    except ValueError:
-        try:
-            return int(text, 0)
-        except ValueError:
-            cleaned = text.lstrip("0").strip() or "0"
-            try:
-                return int(cleaned, 10)
-            except ValueError:
-                return None
-
-
-def _normalize_operator(mcc: Optional[int], mnc: Optional[int]) -> str:
-    if mnc is None:
-        return "Desconocido"
-    if mcc is not None and mcc != 730:
-        return "Desconocido"
-    if mnc == 1:
-        return "Entel"
-    if mnc == 2:
-        return "Movistar"
-    if mnc == 3:
-        return "Claro"
-    if mnc == 9:
-        return "WOM"
-    return "Desconocido"
-
-
-def _csq_to_dbm(network_label: str, csq: Optional[float]) -> Optional[float]:
-    if csq is None:
-        return None
-    if network_label in {"2G", "3G"}:
-        if csq in {99, 199}:
-            return None
-        return csq * 2 - 113
-    if network_label == "4G":
-        if csq in {255, 511}:
-            return None
-        return csq - 140
-    return None
-
-
-def _classify_signal(network_label: str, csq: Optional[float], csq_ber: Optional[int]) -> Tuple[str, Optional[float]]:
-    dbm = _csq_to_dbm(network_label, csq)
-    if dbm is None:
-        return "Desconocida", None
-    quality: str
-    if dbm >= -80:
-        quality = "Excelente"
-    elif dbm >= -90:
-        quality = "Buena"
-    elif dbm >= -100:
-        quality = "Regular"
-    else:
-        quality = "Pésima"
-
-    if network_label == "3G" and csq_ber is not None:
-        # BER 5-7 se considera mala calidad.
-        if csq_ber >= 7:
-            quality = "Pésima"
-        elif csq_ber >= 5 and quality == "Excelente":
-            quality = "Buena"
-    return quality, dbm
-
-
-def _first_existing(candidates: Sequence[str], available: Iterable[str]) -> Optional[str]:
-    available_lower = {name.lower(): name for name in available}
-    for candidate in candidates:
-        if candidate.lower() in available_lower:
-            return available_lower[candidate.lower()]
-    return None
-
-
-def _detect_table(conn: sqlite3.Connection, report: str, model: str) -> str:
-    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    names = [row[0] for row in cursor.fetchall()]
-    if not names:
-        raise ValueError("La base de datos no tiene tablas")
-    model_lower = model.lower()
-    report_lower = report.lower()
-    candidates = [
-        f"{report_lower}_{model_lower}",
-        f"{report_lower}_{model}",
-        f"{report}_{model_lower}",
-        f"{report}_{model}",
-        f"{report_lower}_records",
-        f"{report}_records",
-        f"{model_lower}_{report_lower}",
-        f"{report_lower}",
-    ]
-    existing_lower = {name.lower(): name for name in names}
-    for candidate in candidates:
-        if candidate.lower() in existing_lower:
-            return existing_lower[candidate.lower()]
-    if len(names) == 1:
-        return names[0]
-    raise ValueError(f"No se encontró una tabla para {report}/{model}. Tablas: {', '.join(names)}")
-
-
 # Lectura de datos -----------------------------------------------------------
-
-
-def _load_table_schema(conn: sqlite3.Connection, table: str) -> List[str]:
-    info = conn.execute(f'PRAGMA table_info("{table}")').fetchall()
-    return [row[1] for row in info]
-
 
 def _load_locations_from_db(
     db_path: Path,
@@ -281,12 +123,27 @@ def _load_locations_from_db(
 
         mcc_col = _first_existing(MCC_CANDIDATES, columns)
         mnc_col = _first_existing(MNC_CANDIDATES, columns)
+        csq_col = _first_existing(CSQ_CANDIDATES, columns)
+        ber_col = _first_existing(CSQ_BER_CANDIDATES, columns)
+        tech_col = "tecnologia_celular" if "tecnologia_celular" in columns else None
+        quality_col = "calidad_senal" if "calidad_senal" in columns else None
+        dbm_col = "nivel_senal_dbm" if "nivel_senal_dbm" in columns else None
 
         query_cols = {lat_col, lon_col, time_col, imei_col}
         if mcc_col:
             query_cols.add(mcc_col)
         if mnc_col:
             query_cols.add(mnc_col)
+        if csq_col:
+            query_cols.add(csq_col)
+        if ber_col:
+            query_cols.add(ber_col)
+        if tech_col:
+            query_cols.add(tech_col)
+        if quality_col:
+            query_cols.add(quality_col)
+        if dbm_col:
+            query_cols.add(dbm_col)
         query_cols.add("report_type") if "report_type" in columns else None
 
         select_clause = ", ".join(f'"{col}"' for col in query_cols)
@@ -296,14 +153,44 @@ def _load_locations_from_db(
         for row in conn.execute(sql, (imei,)):
             raw_lat = _safe_float(row[lat_col])
             raw_lon = _safe_float(row[lon_col])
-            lat = raw_lat if raw_lat is not None else raw_lon
-            lon = raw_lon if raw_lon is not None else raw_lat
             dt = _parse_datetime(row[time_col])
-            if lat is None or lon is None or dt is None:
+            if raw_lat is None or raw_lon is None or dt is None:
                 continue
             mcc = _safe_int(row[mcc_col]) if mcc_col else None
             mnc = _safe_int(row[mnc_col]) if mnc_col else None
+            lat, lon = raw_lat, raw_lon
+            if abs(lat) > 90 and abs(raw_lon) <= 90:
+                lat, lon = raw_lon, raw_lat
+            elif (
+                mcc == 730
+                and abs(lat) > 60
+                and 20 <= abs(lon) < 60
+            ):
+                lat, lon = lon, lat
+            if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+                continue
+
             operator = _normalize_operator(mcc, mnc)
+            network_label = "Desconocida"
+            if tech_col:
+                raw_tech = row[tech_col]
+                if raw_tech not in (None, ""):
+                    network_label = str(raw_tech).strip()
+            signal_quality = "Desconocida"
+            if quality_col:
+                raw_quality = row[quality_col]
+                if raw_quality not in (None, ""):
+                    signal_quality = str(raw_quality).strip()
+            csq = _safe_float(row[csq_col]) if csq_col else None
+            csq_ber = _safe_int(row[ber_col]) if ber_col else None
+            signal_dbm = _safe_float(row[dbm_col]) if dbm_col else None
+            if signal_dbm is None and network_label not in (None, "", "Desconocida"):
+                computed_quality, computed_dbm = _classify_signal(
+                    network_label, csq, csq_ber
+                )
+                if signal_quality == "Desconocida":
+                    signal_quality = computed_quality
+                signal_dbm = computed_dbm
             raw_payload = {col: row[col] for col in row.keys()}
             points.append(
                 LocationPoint(
@@ -316,6 +203,11 @@ def _load_locations_from_db(
                     mcc=mcc,
                     mnc=mnc,
                     raw_payload=raw_payload,
+                    network_label=network_label or "Desconocida",
+                    signal_quality=signal_quality or "Desconocida",
+                    signal_dbm=signal_dbm,
+                    csq=csq,
+                    csq_ber=csq_ber,
                 )
             )
         return points
@@ -388,6 +280,9 @@ def _associate_info(points: List[LocationPoint], infos: List[InfoRecord]) -> Non
             idx += 1
         if current_info is None:
             continue
+        if point.network_label not in (None, "", "Desconocida"):
+            if point.signal_quality not in (None, "", "Desconocida") and point.signal_dbm is not None:
+                continue
         point.network_label = current_info.network_label
         point.csq = current_info.csq
         point.csq_ber = current_info.csq_ber
@@ -519,10 +414,26 @@ def render_interactive_map(
     operator_groups: Dict[str, FeatureGroup] = {}
     network_groups: Dict[str, FeatureGroup] = {}
 
+    all_days_group = FeatureGroup(name="Todos los días", overlay=True, show=True)
+    all_days_group.add_to(fmap)
+    day_groups["Todos los días"] = all_days_group
+
+    for operator_label, color in OPERATOR_COLORS.items():
+        group = FeatureGroup(name=f"Operador {operator_label}", overlay=True, show=True)
+        group.add_to(fmap)
+        operator_groups[operator_label] = group
+
+    for network_label, color in NETWORK_COLORS.items():
+        group = FeatureGroup(name=f"Tecnología {network_label}", overlay=True, show=True)
+        group.add_to(fmap)
+        network_groups[network_label] = group
+
     day_coords: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
     operator_coords: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
     network_coords: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
     day_operator_counts: Dict[str, Counter] = defaultdict(Counter)
+    all_coords: List[Tuple[float, float]] = []
+    all_operator_counts: Counter = Counter()
 
     for point in points_sorted:
         day_label = point.send_time.date().isoformat()
@@ -565,10 +476,23 @@ def render_interactive_map(
                 tooltip=tooltip,
             ).add_to(group)
 
+        folium.CircleMarker(
+            location=(point.lat, point.lon),
+            radius=6,
+            color=operator_color,
+            weight=2,
+            fill=True,
+            fill_color=operator_color,
+            fill_opacity=0.85,
+            tooltip=tooltip,
+        ).add_to(all_days_group)
+
         day_coords[day_label].append((point.lat, point.lon))
         operator_coords[operator_label].append((point.lat, point.lon))
         network_coords[network_label].append((point.lat, point.lon))
         day_operator_counts[day_label][operator_label] += 1
+        all_coords.append((point.lat, point.lon))
+        all_operator_counts[operator_label] += 1
 
     for day_label, coords in day_coords.items():
         if len(coords) < 2:
@@ -579,6 +503,15 @@ def render_interactive_map(
         color = OPERATOR_COLORS.get(dominant_operator, OPERATOR_COLORS["Desconocido"])
         folium.PolyLine(coords, color=color, weight=4, opacity=0.6).add_to(
             day_groups[day_label]
+        )
+
+    if len(all_coords) >= 2:
+        dominant_operator, _ = max(
+            all_operator_counts.items(), key=lambda item: item[1]
+        )
+        color = OPERATOR_COLORS.get(dominant_operator, OPERATOR_COLORS["Desconocido"])
+        folium.PolyLine(all_coords, color=color, weight=4, opacity=0.6).add_to(
+            all_days_group
         )
 
     for operator_label, coords in operator_coords.items():
@@ -597,10 +530,32 @@ def render_interactive_map(
             network_groups[network_label]
         )
 
+    sorted_day_layers = [day_groups["Todos los días"]] + [
+        day_groups[key] for key in sorted(day_groups.keys()) if key != "Todos los días"
+    ]
+    sorted_operator_layers = [
+        operator_groups[key]
+        for key in OPERATOR_COLORS.keys()
+        if key in operator_groups
+    ] + [
+        operator_groups[key]
+        for key in sorted(operator_groups.keys())
+        if key not in OPERATOR_COLORS
+    ]
+    sorted_network_layers = [
+        network_groups[key]
+        for key in NETWORK_COLORS.keys()
+        if key in network_groups
+    ] + [
+        network_groups[key]
+        for key in sorted(network_groups.keys())
+        if key not in NETWORK_COLORS
+    ]
+
     grouped_layers = {
-        "Días": [day_groups[key] for key in sorted(day_groups.keys())],
-        "Operadores": [operator_groups[key] for key in sorted(operator_groups.keys())],
-        "Tecnologías": [network_groups[key] for key in sorted(network_groups.keys())],
+        "Días": sorted_day_layers,
+        "Operadores": sorted_operator_layers,
+        "Tecnologías": sorted_network_layers,
     }
     GroupedLayerControl(grouped_layers, collapsed=False).add_to(fmap)
 
@@ -630,8 +585,13 @@ def build_points(
     searched_paths: List[Path] = []
     for report in reports_to_use:
         db_path = base_dir / f"{report}_{model_clean}.db"
-        searched_paths.append(db_path)
-        points = _load_locations_from_db(db_path, report, model_clean, imei)
+        enriched_path = ensure_enriched_database(
+            report=report,
+            model=model_clean,
+            base_dir=base_dir,
+        )
+        searched_paths.append(enriched_path)
+        points = _load_locations_from_db(enriched_path, report, model_clean, imei)
         all_points.extend(points)
 
     if not all_points:
