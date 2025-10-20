@@ -198,6 +198,70 @@ def test_build_points_uses_enriched_database(tmp_path: Path):
     assert [p.signal_quality for p in points] == ["Excelente", "Excelente", "Buena"]
     assert [p.operator for p in points] == ["Movistar"] * 3
     assert points[0].lat == pytest.approx(-33.45)
+
+
+def test_build_points_accepts_whitespace_imei(tmp_path: Path):
+    base_dir = tmp_path
+    model = "gv310lau"
+    imei = "868589060824888"
+
+    gteri_path = base_dir / f"gteri_{model}.db"
+    conn = sqlite3.connect(gteri_path)
+    conn.execute(
+        f"""
+        CREATE TABLE "gteri_{model}" (
+            imei TEXT,
+            send_time TEXT,
+            lat REAL,
+            lon REAL,
+            mcc TEXT,
+            mnc TEXT,
+            report_type TEXT
+        )
+        """
+    )
+    conn.execute(
+        f'INSERT INTO "gteri_{model}" (imei, send_time, lat, lon, mcc, mnc, report_type) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?)',
+        (f"  {imei}\r\n", "202401020304", -33.45, -70.66, "0730", "0002", "GTERI"),
+    )
+    conn.commit()
+    conn.close()
+
+    gtinf_path = base_dir / f"gtinf_{model}.db"
+    conn = sqlite3.connect(gtinf_path)
+    conn.execute(
+        f"""
+        CREATE TABLE "gtinf_{model}" (
+            imei TEXT,
+            send_time TEXT,
+            network_type INTEGER,
+            csq REAL,
+            csq_ber INTEGER
+        )
+        """
+    )
+    conn.execute(
+        f'INSERT INTO "gtinf_{model}" (imei, send_time, network_type, csq, csq_ber) '
+        'VALUES (?, ?, ?, ?, ?)',
+        (f"\t{imei}   ", "202401020200", 3, 160, None),
+    )
+    conn.commit()
+    conn.close()
+
+    points = build_points(
+        model=model,
+        imei=imei,
+        base_dir=base_dir,
+        reports=["gteri"],
+    )
+
+    assert len(points) == 1
+    point = points[0]
+    assert point.lat == pytest.approx(-33.45)
+    assert point.operator == "Movistar"
+    assert point.network_label == "4G"
+    assert point.signal_quality == "Excelente"
     assert points[0].lon == pytest.approx(-70.66)
 
 
