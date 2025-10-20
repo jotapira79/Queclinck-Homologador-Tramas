@@ -6,6 +6,7 @@ import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -139,16 +140,40 @@ def _require_folium() -> None:
     if _FOLIUM_IMPORT_ERROR is not None:
         raise _FOLIUM_IMPORT_ERROR
 
-def _normalized_imei_value(value: str) -> str:
-    return "".join(ch for ch in str(value).strip() if ch.isalnum())
+def _normalized_imei_value(value: object) -> str:
+    if value in (None, ""):
+        return ""
+
+    text = str(value).strip()
+    if not text:
+        return ""
+
+    # Algunos archivos SQLite almacenan el IMEI como número en notación
+    # científica (por ejemplo ``8.68589060824888e+14``). En esos casos
+    # intentamos decodificarlo como entero antes de aplicar una limpieza
+    # genérica para mantener la compatibilidad con bases históricas.
+    if any(ch in text for ch in ".eE"):
+        try:
+            number = Decimal(text)
+        except (InvalidOperation, ValueError):
+            number = None
+        else:
+            if number == number.to_integral_value():
+                return str(int(number))
+
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if digits:
+        return digits
+
+    return "".join(ch for ch in text if ch.isalnum())
 
 
 def _normalized_imei_expression(column: str) -> str:
-    base = f'trim(CAST("{column}" AS TEXT))'
-    without_breaks = (
-        f"replace(replace(replace(replace({base}, char(10), ''), char(13), ''), char(9), ''), ' ', '')"
-    )
-    return f"replace({without_breaks}, '-', '')"
+    return f'normalize_imei("{column}")'
+
+
+def _register_sqlite_helpers(conn: sqlite3.Connection) -> None:
+    conn.create_function("normalize_imei", 1, _normalized_imei_value)
 
 
 # Lectura de datos -----------------------------------------------------------
@@ -163,6 +188,7 @@ def _load_locations_from_db(
         return []
 
     conn = ensure_db(db_path)
+    _register_sqlite_helpers(conn)
     conn.row_factory = sqlite3.Row
     try:
         table = _detect_table(conn, report, model)
@@ -286,6 +312,7 @@ def _load_gtinf_records(db_path: Path, model: str, imei: str) -> List[InfoRecord
         return []
 
     conn = ensure_db(db_path)
+    _register_sqlite_helpers(conn)
     conn.row_factory = sqlite3.Row
     table = _detect_table(conn, "gtinf", model)
     columns = _load_table_schema(conn, table)
