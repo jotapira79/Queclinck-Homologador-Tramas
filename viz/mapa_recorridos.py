@@ -379,21 +379,19 @@ def _associate_info(points: List[LocationPoint], infos: List[InfoRecord]) -> Non
         return
     infos_sorted = sorted(infos, key=lambda r: r.send_time)
     idx = 0
+    current_info: Optional[InfoRecord] = None
     for point in sorted(points, key=lambda p: p.send_time):
-        while idx + 1 < len(infos_sorted):
-            curr = infos_sorted[idx]
-            nxt = infos_sorted[idx + 1]
-            if abs((nxt.send_time - point.send_time).total_seconds()) <= abs(
-                (curr.send_time - point.send_time).total_seconds()
-            ):
-                idx += 1
-            else:
-                break
-        info = infos_sorted[idx]
-        point.network_label = info.network_label
-        point.csq = info.csq
-        point.csq_ber = info.csq_ber
-        quality, dbm = _classify_signal(info.network_label, info.csq, info.csq_ber)
+        while idx < len(infos_sorted) and infos_sorted[idx].send_time <= point.send_time:
+            current_info = infos_sorted[idx]
+            idx += 1
+        if current_info is None:
+            continue
+        point.network_label = current_info.network_label
+        point.csq = current_info.csq
+        point.csq_ber = current_info.csq_ber
+        quality, dbm = _classify_signal(
+            current_info.network_label, current_info.csq, current_info.csq_ber
+        )
         point.signal_quality = quality
         point.signal_dbm = dbm
 
@@ -408,14 +406,31 @@ def _filter_points(
     networks: Optional[Sequence[str]] = None,
 ) -> List[LocationPoint]:
     result = []
-    operator_set = {op.lower() for op in operators} if operators else None
-    network_set = {nt.lower() for nt in networks} if networks else None
+
+    normalized_ops = (
+        {op.strip().lower() for op in operators if op is not None}
+        if operators
+        else None
+    )
+    operator_set = None if not normalized_ops or "all" in normalized_ops else normalized_ops
+
+    normalized_networks = (
+        {nt.strip().lower() for nt in networks if nt is not None}
+        if networks
+        else None
+    )
+    network_set = (
+        None if not normalized_networks or "all" in normalized_networks else normalized_networks
+    )
+
     day_value: Optional[datetime] = None
     if day:
-        try:
-            day_value = datetime.strptime(day, "%Y-%m-%d")
-        except ValueError as exc:  # pragma: no cover - validación de CLI
-            raise ValueError("El día debe tener formato YYYY-MM-DD") from exc
+        day_clean = day.strip()
+        if day_clean.lower() != "all":
+            try:
+                day_value = datetime.strptime(day_clean, "%Y-%m-%d")
+            except ValueError as exc:  # pragma: no cover - validación de CLI
+                raise ValueError("El día debe tener formato YYYY-MM-DD") from exc
     for point in points:
         if day_value and point.send_time.date() != day_value.date():
             continue
@@ -675,19 +690,19 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--day",
-        help="Filtra por fecha local (YYYY-MM-DD) usando send_time",
+        help="Filtra por fecha local (YYYY-MM-DD) usando send_time. Usa 'All' para no filtrar",
     )
     parser.add_argument(
         "--operator",
         dest="operators",
         action="append",
-        help="Filtra por operador (puede repetirse). Ej: --operator Claro",
+        help="Filtra por operador (puede repetirse). Usa 'All' para incluir todos",
     )
     parser.add_argument(
         "--network",
         dest="networks",
         action="append",
-        help="Filtra por tecnología de red (2G, 3G, 4G)",
+        help="Filtra por tecnología de red (2G, 3G, 4G). Usa 'All' para incluir todas",
     )
     parser.add_argument(
         "--report",
