@@ -625,14 +625,26 @@ def build_points(
 
     reports_to_use = [r.lower() for r in (reports or ["gteri", "gtfri"])]
     all_points: List[LocationPoint] = []
+    searched_paths: List[Path] = []
     for report in reports_to_use:
         db_path = base_dir / f"{report}_{model_clean}.db"
+        searched_paths.append(db_path)
         points = _load_locations_from_db(db_path, report, model_clean, imei)
         all_points.extend(points)
 
     if not all_points:
+        existing_paths = [path for path in searched_paths if path.exists()]
+        if existing_paths:
+            bases_detalle = ", ".join(path.name for path in existing_paths)
+            raise FileNotFoundError(
+                "No se encontraron registros de recorrido para el IMEI "
+                f"{imei} en las bases consultadas ({bases_detalle})."
+            )
+
+        bases_detalle = ", ".join(path.name for path in searched_paths) or "(ninguna)"
         raise FileNotFoundError(
-            "No se encontraron registros de recorrido en las bases especificadas."
+            "No se encontraron bases de datos de recorrido para el modelo "
+            f"'{model_clean}'. Se buscaron: {bases_detalle}."
         )
 
     info_path = base_dir / f"gtinf_{model_clean}.db"
