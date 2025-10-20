@@ -4,8 +4,6 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("folium")
-
 from viz.mapa_recorridos import (
     build_points,
     render_interactive_map,
@@ -165,7 +163,7 @@ def test_enriched_database_creates_columns_and_values(tmp_path: Path):
     conn = sqlite3.connect(enriched_path)
     try:
         rows = conn.execute(
-            'SELECT tecnologia_celular, calidad_senal, nivel_senal_dbm '
+            'SELECT tecnologia_celular, calidad_senal, nivel_senal_dbm, operador '
             'FROM "gteri_gv350ceu" ORDER BY send_time'
         ).fetchall()
     finally:
@@ -174,11 +172,13 @@ def test_enriched_database_creates_columns_and_values(tmp_path: Path):
     tecnologias = [row[0] for row in rows]
     calidades = [row[1] for row in rows]
     niveles = [row[2] for row in rows]
+    operadores = [row[3] for row in rows]
 
     assert tecnologias == ["4G", "4G", "2G"]
     assert calidades == ["Excelente", "Excelente", "Buena"]
     assert niveles[0] == pytest.approx(20.0)
     assert niveles[2] == pytest.approx(-89.0)
+    assert operadores == ["Movistar", "Movistar", "Movistar"]
 
 
 def test_build_points_uses_enriched_database(tmp_path: Path):
@@ -199,6 +199,42 @@ def test_build_points_uses_enriched_database(tmp_path: Path):
     assert [p.operator for p in points] == ["Movistar"] * 3
     assert points[0].lat == pytest.approx(-33.45)
     assert points[0].lon == pytest.approx(-70.66)
+
+
+def test_build_points_swaps_coordinates_without_mcc(tmp_path: Path):
+    model = "gv350ceu"
+    imei = "987654321098765"
+    base_dir = tmp_path
+
+    gteri_path = base_dir / f"gteri_{model}.db"
+    conn = sqlite3.connect(gteri_path)
+    conn.execute(
+        f'CREATE TABLE "gteri_{model}" ('
+        'imei TEXT, send_time TEXT, lat REAL, lon REAL, mnc TEXT)'
+    )
+    conn.executemany(
+        f'INSERT INTO "gteri_{model}" (imei, send_time, lat, lon, mnc) '
+        'VALUES (?, ?, ?, ?, ?)',
+        [
+            (imei, "202510100000", -70.66, -33.45, "0002"),
+            (imei, "202510100500", -70.65, -33.46, "0002"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    ensure_enriched_database(report="gteri", model=model, base_dir=base_dir)
+
+    points = build_points(
+        model=model,
+        imei=imei,
+        base_dir=base_dir,
+        reports=["gteri"],
+    )
+
+    assert len(points) == 2
+    assert all(-40.0 < p.lat < -20.0 for p in points)
+    assert all(-80.0 < p.lon < -60.0 for p in points)
 
 
 def test_render_interactive_map_includes_all_filters(tmp_path: Path):
