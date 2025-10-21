@@ -637,14 +637,14 @@ class FilterPanel(MacroElement):
                         {% endfor %}
                     </select>
                     <label for="{{ this.get_name() }}_operator" style="display:block; font-weight:bold; margin-bottom:4px;">Operador</label>
-                    <select id="{{ this.get_name() }}_operator" style="width:100%; margin-bottom:10px; padding:4px;" disabled>
+                    <select id="{{ this.get_name() }}_operator" style="width:100%; margin-bottom:10px; padding:4px;">
                         <option value="All" selected>Todos</option>
                         {% for operator in this.operator_options %}
                         <option value="{{ operator }}">{{ operator }}</option>
                         {% endfor %}
                     </select>
                     <label for="{{ this.get_name() }}_network" style="display:block; font-weight:bold; margin-bottom:4px;">Tecnología</label>
-                    <select id="{{ this.get_name() }}_network" style="width:100%; padding:4px;" disabled>
+                    <select id="{{ this.get_name() }}_network" style="width:100%; padding:4px;">
                         <option value="All" selected>Todos</option>
                         {% for network in this.network_options %}
                         <option value="{{ network }}">{{ network }}</option>
@@ -808,7 +808,6 @@ class FilterPanel(MacroElement):
                     var reportChanged = dayChanged || normalizedReport !== lastSelections.report;
 
                     var reportFiltered = filterByReport(basePoints, selectedReport);
-                    reportSelect.disabled = basePoints.length === 0;
 
                     populateSelect(
                         operatorSelect,
@@ -823,8 +822,6 @@ class FilterPanel(MacroElement):
                         []
                     );
 
-                    operatorSelect.disabled = reportFiltered.length === 0;
-                    networkSelect.disabled = reportFiltered.length === 0;
 
                     var opValue = operatorSelect.value || "All";
                     var netValue = networkSelect.value || "All";
@@ -983,11 +980,15 @@ def build_points(
     if not model_clean:
         raise ValueError("El modelo no puede estar vacío")
 
-    reports_to_use = [r.lower() for r in (reports or ["gteri", "gtfri"])]
+    reports_to_use = [r.lower() for r in (reports or ["gteri"])]
     all_points: List[LocationPoint] = []
     searched_paths: List[Path] = []
     for report in reports_to_use:
-        db_path = base_dir / f"{report}_{model_clean}.db"
+        candidate_paths = [
+            base_dir / f"{report}_{model_clean}_map.db",
+            base_dir / f"{report}_{model_clean}.db",
+        ]
+        db_path = next((path for path in candidate_paths if path.exists()), candidate_paths[0])
         try:
             enriched_path = ensure_enriched_database(
                 report=report,
@@ -996,7 +997,7 @@ def build_points(
                 imei=imei,
             )
         except FileNotFoundError:
-            searched_paths.append(db_path)
+            searched_paths.extend(candidate_paths)
             continue
 
         searched_paths.append(enriched_path)
@@ -1004,7 +1005,7 @@ def build_points(
         all_points.extend(points)
 
     if not all_points:
-        existing_paths = [path for path in searched_paths if path.exists()]
+        existing_paths = list({path: None for path in searched_paths if path.exists()}.keys())
         if existing_paths:
             bases_detalle = ", ".join(path.name for path in existing_paths)
             raise FileNotFoundError(
@@ -1012,13 +1013,18 @@ def build_points(
                 f"{imei} en las bases consultadas ({bases_detalle})."
             )
 
-        bases_detalle = ", ".join(path.name for path in searched_paths) or "(ninguna)"
+        all_candidates = list({path: None for path in searched_paths}.keys())
+        bases_detalle = ", ".join(path.name for path in all_candidates) or "(ninguna)"
         raise FileNotFoundError(
             "No se encontraron bases de datos de recorrido para el modelo "
             f"'{model_clean}'. Se buscaron: {bases_detalle}."
         )
 
-    info_path = base_dir / f"gtinf_{model_clean}.db"
+    info_candidates = [
+        base_dir / f"gtinf_{model_clean}_map.db",
+        base_dir / f"gtinf_{model_clean}.db",
+    ]
+    info_path = next((path for path in info_candidates if path.exists()), info_candidates[0])
     info_records = _load_gtinf_records(info_path, model_clean, imei)
     if info_records:
         _associate_info(all_points, info_records)
@@ -1030,7 +1036,7 @@ def generate_map(
     *,
     model: str,
     imei: str,
-    base_dir: Path | str = Path("."),
+    base_dir: Path | str = Path("bases_sqlite"),
     output_dir: Path | str = Path("."),
     day: Optional[str] = None,
     report_types: Optional[Sequence[str]] = None,
@@ -1064,14 +1070,14 @@ def generate_map(
 
 def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Genera un mapa interactivo por IMEI utilizando las bases gteri/gtfri/gtinf",
+        description="Genera un mapa interactivo por IMEI utilizando las bases gteri_map y gtinf_map",
     )
     parser.add_argument("--model", required=True, help="Modelo del equipo (ej. gv350ceu)")
     parser.add_argument("--imei", required=True, help="IMEI a consultar")
     parser.add_argument(
         "--db-dir",
-        default=".",
-        help="Directorio que contiene los archivos SQLite (por defecto el directorio actual)",
+        default="bases_sqlite",
+        help="Directorio que contiene los archivos SQLite (por defecto bases_sqlite)",
     )
     parser.add_argument(
         "--out-dir",
@@ -1098,8 +1104,8 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--report",
         dest="reports",
         action="append",
-        choices=["gteri", "gtfri"],
-        help="Limita los reportes de posición a usar (por defecto gteri y gtfri)",
+        choices=["gteri"],
+        help="Limita los reportes de posición a usar (solo se admite gteri)",
     )
     parser.add_argument(
         "--tiles",

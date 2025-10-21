@@ -444,6 +444,102 @@ def test_build_points_swaps_coordinates_without_mcc(tmp_path: Path):
     assert all(-80.0 < p.lon < -60.0 for p in points)
 
 
+def test_build_points_uses_existing_map_databases(tmp_path: Path):
+    model = "gv350ceu"
+    imei = "123456789012345"
+    base_dir = tmp_path
+
+    gteri_map_path = base_dir / f"gteri_{model}_map.db"
+    conn = sqlite3.connect(gteri_map_path)
+    conn.execute(
+        f"""
+        CREATE TABLE "gteri_{model}" (
+            imei TEXT,
+            send_time TEXT,
+            lat REAL,
+            lon REAL,
+            mcc TEXT,
+            mnc TEXT,
+            report_type TEXT,
+            tecnologia_celular TEXT,
+            calidad_senal TEXT,
+            nivel_senal_dbm REAL,
+            operador TEXT
+        )
+        """
+    )
+    conn.executemany(
+        f'INSERT INTO "gteri_{model}" (imei, send_time, lat, lon, mcc, mnc, report_type, tecnologia_celular, calidad_senal, nivel_senal_dbm, operador) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+            (
+                imei,
+                "202510100000",
+                -33.45,
+                -70.66,
+                "0730",
+                "0002",
+                "+BUFF:GTERI",
+                "4G",
+                "Excelente",
+                18.0,
+                "Movistar",
+            ),
+            (
+                imei,
+                "202510100100",
+                -33.46,
+                -70.65,
+                "0730",
+                "0002",
+                "+RESP:GTERI",
+                "3G",
+                "Buena",
+                -85.0,
+                "Movistar",
+            ),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    gtinf_map_path = base_dir / f"gtinf_{model}_map.db"
+    conn = sqlite3.connect(gtinf_map_path)
+    conn.execute(
+        f"""
+        CREATE TABLE "gtinf_{model}" (
+            imei TEXT,
+            send_time TEXT,
+            network_type INTEGER,
+            csq REAL,
+            csq_ber INTEGER
+        )
+        """
+    )
+    conn.executemany(
+        f'INSERT INTO "gtinf_{model}" (imei, send_time, network_type, csq, csq_ber) '
+        'VALUES (?, ?, ?, ?, ?)',
+        [
+            (imei, "20251009235950", 3, 160, None),
+            (imei, "202510100055", 2, 90, None),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    points = build_points(
+        model=model,
+        imei=imei,
+        base_dir=base_dir,
+        reports=["gteri"],
+    )
+
+    assert len(points) == 2
+    assert {p.report_kind for p in points} == {"BUFFER", "RESP"}
+    assert all(p.operator == "Movistar" for p in points)
+    assert {p.network_label for p in points} == {"4G", "3G"}
+
+
 def test_render_interactive_map_includes_all_filters(tmp_path: Path):
     pytest.importorskip("folium")
     base_dir = _prepare_sample_databases(tmp_path)
@@ -465,3 +561,6 @@ def test_render_interactive_map_includes_all_filters(tmp_path: Path):
     assert "2025-10-10" in html
     assert ">Operador<" in html
     assert ">Tecnología<" in html
+    assert 'id="FilterPanel_operator" style=' in html
+    operator_fragment = html.split('id="FilterPanel_operator"', 1)[1].split('>', 1)[0]
+    assert "disabled" not in operator_fragment
