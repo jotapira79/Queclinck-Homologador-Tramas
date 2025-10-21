@@ -438,6 +438,8 @@ def test_render_interactive_map_includes_all_filters(tmp_path: Path):
     render_interactive_map(points, output_html)
 
     html = output_html.read_text(encoding="utf-8")
-    assert "Todos los días" in html
-    assert "Operador Movistar" in html
-    assert "Tecnología 4G" in html
+    assert 'data-filter-panel="interactive-filters"' in html
+    assert "Filtros" in html
+    assert "2025-10-10" in html
+    assert ">Operador<" in html
+    assert ">Tecnología<" in html

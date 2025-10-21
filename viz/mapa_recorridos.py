@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sqlite3
-from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -12,12 +12,11 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 try:  # pragma: no cover - dependencia opcional en tiempo de ejecución
     import folium
-    from folium import FeatureGroup, Map
-    from folium.plugins import GroupedLayerControl
+    from folium import Map
     _FOLIUM_IMPORT_ERROR: ModuleNotFoundError | None = None
 except ModuleNotFoundError as exc:  # pragma: no cover - entorno sin folium
     folium = None  # type: ignore[assignment]
-    FeatureGroup = Map = GroupedLayerControl = None  # type: ignore[assignment]
+    Map = None  # type: ignore[assignment]
     _FOLIUM_IMPORT_ERROR = ModuleNotFoundError(
         "folium no está instalado. Ejecuta 'pip install folium pytz python-dateutil'"
     )
@@ -508,6 +507,203 @@ class OperatorLegend(MacroElement):
         )
 
 
+class FilterPanel(MacroElement):
+    """Panel de filtros jerárquicos Día → Operador/Tecnología."""
+
+    def __init__(
+        self,
+        *,
+        points_data: List[dict],
+        day_options: List[str],
+        operator_options: List[str],
+        network_options: List[str],
+        operator_colors: Dict[str, str],
+        initial_day: str,
+    ) -> None:
+        if Template is None:  # pragma: no cover - dependencia opcional
+            raise RuntimeError(
+                "jinja2 es requerida para generar el panel de filtros interactivo"
+            )
+        super().__init__()
+        self._name = "FilterPanel"
+        self.points_json = json.dumps(points_data, ensure_ascii=False)
+        self.operator_colors_json = json.dumps(operator_colors, ensure_ascii=False)
+        self.day_options = day_options
+        self.operator_options = operator_options
+        self.network_options = network_options
+        self.initial_day = initial_day
+        self._template = Template(
+            """
+            {% macro html(this, kwargs) %}
+            <div id="{{ this.get_name() }}" class="filter-panel" data-filter-panel="interactive-filters"
+                 style="position: fixed; top: 20px; left: 20px; z-index: 9999; background-color: white;"
+                 >
+                <div style="border: 1px solid #bbb; padding: 12px 14px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); border-radius: 6px; width: 220px;">
+                    <div style="font-weight: bold; margin-bottom: 8px; font-size: 14px;">Filtros</div>
+                    <label for="{{ this.get_name() }}_day" style="display:block; font-weight:bold; margin-bottom:4px;">Día</label>
+                    <select id="{{ this.get_name() }}_day" style="width:100%; margin-bottom:10px; padding:4px;">
+                        <option value="All">Todos</option>
+                        {% for day in this.day_options %}
+                        <option value="{{ day }}" {% if day == this.initial_day %}selected{% endif %}>{{ day }}</option>
+                        {% endfor %}
+                    </select>
+                    <label for="{{ this.get_name() }}_operator" style="display:block; font-weight:bold; margin-bottom:4px;">Operador</label>
+                    <select id="{{ this.get_name() }}_operator" style="width:100%; margin-bottom:10px; padding:4px;" disabled>
+                        <option value="All" selected>Todos</option>
+                        {% for operator in this.operator_options %}
+                        <option value="{{ operator }}">{{ operator }}</option>
+                        {% endfor %}
+                    </select>
+                    <label for="{{ this.get_name() }}_network" style="display:block; font-weight:bold; margin-bottom:4px;">Tecnología</label>
+                    <select id="{{ this.get_name() }}_network" style="width:100%; padding:4px;" disabled>
+                        <option value="All" selected>Todos</option>
+                        {% for network in this.network_options %}
+                        <option value="{{ network }}">{{ network }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            {% endmacro %}
+
+            {% macro script(this, kwargs) %}
+            (function() {
+                var mapObj = {{ this._parent.get_name() }};
+                var pointsData = {{ this.points_json | safe }};
+                var operatorColors = {{ this.operator_colors_json | safe }};
+                var panelId = "{{ this.get_name() }}";
+                var daySelect = document.getElementById(panelId + "_day");
+                var operatorSelect = document.getElementById(panelId + "_operator");
+                var networkSelect = document.getElementById(panelId + "_network");
+                var markersLayer = L.layerGroup().addTo(mapObj);
+                var routeLayer = L.layerGroup().addTo(mapObj);
+
+                function colorForOperator(operator) {
+                    if (operatorColors.hasOwnProperty(operator)) {
+                        return operatorColors[operator];
+                    }
+                    if (operatorColors.hasOwnProperty("Desconocido")) {
+                        return operatorColors["Desconocido"];
+                    }
+                    return "#7f7f7f";
+                }
+
+                function dominantOperator(points) {
+                    var counts = {};
+                    for (var idx = 0; idx < points.length; idx += 1) {
+                        var current = points[idx].operator;
+                        counts[current] = (counts[current] || 0) + 1;
+                    }
+                    var chosen = null;
+                    var maxCount = -1;
+                    for (var key in counts) {
+                        if (!counts.hasOwnProperty(key)) {
+                            continue;
+                        }
+                        if (counts[key] > maxCount) {
+                            chosen = key;
+                            maxCount = counts[key];
+                        }
+                    }
+                    return chosen;
+                }
+
+                function updateFilters() {
+                    var selectedDay = daySelect.value;
+                    var dayActive = selectedDay && selectedDay !== "All";
+                    operatorSelect.disabled = !dayActive;
+                    networkSelect.disabled = !dayActive;
+                    if (!dayActive) {
+                        operatorSelect.value = "All";
+                        networkSelect.value = "All";
+                    }
+
+                    var filtered = [];
+                    for (var i = 0; i < pointsData.length; i += 1) {
+                        var point = pointsData[i];
+                        if (dayActive && point.day !== selectedDay) {
+                            continue;
+                        }
+                        if (dayActive) {
+                            var opValue = operatorSelect.value || "All";
+                            if (opValue !== "All" && point.operator !== opValue) {
+                                continue;
+                            }
+                            var netValue = networkSelect.value || "All";
+                            if (netValue !== "All" && point.network !== netValue) {
+                                continue;
+                            }
+                        }
+                        filtered.push(point);
+                    }
+
+                    if (!dayActive) {
+                        filtered = pointsData.slice();
+                    }
+
+                    filtered.sort(function(a, b) {
+                        if (a.timestamp < b.timestamp) {
+                            return -1;
+                        }
+                        if (a.timestamp > b.timestamp) {
+                            return 1;
+                        }
+                        return 0;
+                    });
+
+                    markersLayer.clearLayers();
+                    routeLayer.clearLayers();
+
+                    if (filtered.length === 0) {
+                        return;
+                    }
+
+                    var latLngs = [];
+                    for (var j = 0; j < filtered.length; j += 1) {
+                        var filteredPoint = filtered[j];
+                        var markerColor = colorForOperator(filteredPoint.operator);
+                        var marker = L.circleMarker([filteredPoint.lat, filteredPoint.lon], {
+                            radius: 6,
+                            color: markerColor,
+                            weight: 2,
+                            fillColor: markerColor,
+                            fillOpacity: 0.85
+                        });
+                        if (filteredPoint.tooltip) {
+                            marker.bindTooltip(filteredPoint.tooltip);
+                        }
+                        marker.addTo(markersLayer);
+                        latLngs.push([filteredPoint.lat, filteredPoint.lon]);
+                    }
+
+                    if (latLngs.length === 1) {
+                        mapObj.setView(latLngs[0], 15);
+                    } else {
+                        mapObj.fitBounds(latLngs, { padding: [30, 30] });
+                    }
+
+                    if (latLngs.length >= 2) {
+                        var routeColor;
+                        if (dayActive && operatorSelect.value && operatorSelect.value !== "All") {
+                            routeColor = colorForOperator(operatorSelect.value);
+                        } else {
+                            var dominant = dominantOperator(filtered);
+                            routeColor = dominant ? colorForOperator(dominant) : "#7f7f7f";
+                        }
+                        L.polyline(latLngs, { color: routeColor, weight: 4, opacity: 0.6 }).addTo(routeLayer);
+                    }
+                }
+
+                daySelect.addEventListener("change", updateFilters);
+                operatorSelect.addEventListener("change", updateFilters);
+                networkSelect.addEventListener("change", updateFilters);
+
+                updateFilters();
+            })();
+            {% endmacro %}
+            """
+        )
+
+
 def render_interactive_map(
     points: List[LocationPoint],
     output_html: Path,
@@ -522,155 +718,35 @@ def render_interactive_map(
     center_lat = points_sorted[0].lat
     center_lon = points_sorted[0].lon
     fmap = Map(location=(center_lat, center_lon), zoom_start=13, tiles=tiles)
+    days = sorted({p.send_time.date().isoformat() for p in points_sorted})
+    operators = sorted({(p.operator or "Desconocido") for p in points_sorted})
+    networks = sorted({(p.network_label or "Desconocida") for p in points_sorted})
 
-    day_groups: Dict[str, FeatureGroup] = {}
-    operator_groups: Dict[str, FeatureGroup] = {}
-    network_groups: Dict[str, FeatureGroup] = {}
-
-    all_days_group = FeatureGroup(name="Todos los días", overlay=True, show=True)
-    all_days_group.add_to(fmap)
-    day_groups["Todos los días"] = all_days_group
-
-    for operator_label, color in OPERATOR_COLORS.items():
-        group = FeatureGroup(name=f"Operador {operator_label}", overlay=True, show=True)
-        group.add_to(fmap)
-        operator_groups[operator_label] = group
-
-    for network_label, color in NETWORK_COLORS.items():
-        group = FeatureGroup(name=f"Tecnología {network_label}", overlay=True, show=True)
-        group.add_to(fmap)
-        network_groups[network_label] = group
-
-    day_coords: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
-    operator_coords: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
-    network_coords: Dict[str, List[Tuple[float, float]]] = defaultdict(list)
-    day_operator_counts: Dict[str, Counter] = defaultdict(Counter)
-    all_coords: List[Tuple[float, float]] = []
-    all_operator_counts: Counter = Counter()
-
-    for point in points_sorted:
-        day_label = point.send_time.date().isoformat()
-        operator_label = point.operator or "Desconocido"
-        network_label = point.network_label or "Desconocida"
-        operator_color = OPERATOR_COLORS.get(operator_label, OPERATOR_COLORS["Desconocido"])
-
-        day_group = day_groups.get(day_label)
-        if day_group is None:
-            day_group = FeatureGroup(name=f"Día {day_label}", overlay=True, show=True)
-            day_group.add_to(fmap)
-            day_groups[day_label] = day_group
-
-        operator_group = operator_groups.get(operator_label)
-        if operator_group is None:
-            operator_group = FeatureGroup(
-                name=f"Operador {operator_label}", overlay=True, show=True
-            )
-            operator_group.add_to(fmap)
-            operator_groups[operator_label] = operator_group
-
-        network_group = network_groups.get(network_label)
-        if network_group is None:
-            network_group = FeatureGroup(
-                name=f"Tecnología {network_label}", overlay=True, show=True
-            )
-            network_group.add_to(fmap)
-            network_groups[network_label] = network_group
-
-        tooltip = _point_to_tooltip(point)
-        for group in (day_group, operator_group, network_group):
-            folium.CircleMarker(
-                location=(point.lat, point.lon),
-                radius=6,
-                color=operator_color,
-                weight=2,
-                fill=True,
-                fill_color=operator_color,
-                fill_opacity=0.85,
-                tooltip=tooltip,
-            ).add_to(group)
-
-        folium.CircleMarker(
-            location=(point.lat, point.lon),
-            radius=6,
-            color=operator_color,
-            weight=2,
-            fill=True,
-            fill_color=operator_color,
-            fill_opacity=0.85,
-            tooltip=tooltip,
-        ).add_to(all_days_group)
-
-        day_coords[day_label].append((point.lat, point.lon))
-        operator_coords[operator_label].append((point.lat, point.lon))
-        network_coords[network_label].append((point.lat, point.lon))
-        day_operator_counts[day_label][operator_label] += 1
-        all_coords.append((point.lat, point.lon))
-        all_operator_counts[operator_label] += 1
-
-    for day_label, coords in day_coords.items():
-        if len(coords) < 2:
-            continue
-        dominant_operator, _ = max(
-            day_operator_counts[day_label].items(), key=lambda item: item[1]
-        )
-        color = OPERATOR_COLORS.get(dominant_operator, OPERATOR_COLORS["Desconocido"])
-        folium.PolyLine(coords, color=color, weight=4, opacity=0.6).add_to(
-            day_groups[day_label]
-        )
-
-    if len(all_coords) >= 2:
-        dominant_operator, _ = max(
-            all_operator_counts.items(), key=lambda item: item[1]
-        )
-        color = OPERATOR_COLORS.get(dominant_operator, OPERATOR_COLORS["Desconocido"])
-        folium.PolyLine(all_coords, color=color, weight=4, opacity=0.6).add_to(
-            all_days_group
-        )
-
-    for operator_label, coords in operator_coords.items():
-        if len(coords) < 2:
-            continue
-        color = OPERATOR_COLORS.get(operator_label, OPERATOR_COLORS["Desconocido"])
-        folium.PolyLine(coords, color=color, weight=4, opacity=0.6).add_to(
-            operator_groups[operator_label]
-        )
-
-    for network_label, coords in network_coords.items():
-        if len(coords) < 2:
-            continue
-        color = NETWORK_COLORS.get(network_label, "#7f7f7f")
-        folium.PolyLine(coords, color=color, weight=4, opacity=0.6).add_to(
-            network_groups[network_label]
-        )
-
-    sorted_day_layers = [day_groups["Todos los días"]] + [
-        day_groups[key] for key in sorted(day_groups.keys()) if key != "Todos los días"
-    ]
-    sorted_operator_layers = [
-        operator_groups[key]
-        for key in OPERATOR_COLORS.keys()
-        if key in operator_groups
-    ] + [
-        operator_groups[key]
-        for key in sorted(operator_groups.keys())
-        if key not in OPERATOR_COLORS
-    ]
-    sorted_network_layers = [
-        network_groups[key]
-        for key in NETWORK_COLORS.keys()
-        if key in network_groups
-    ] + [
-        network_groups[key]
-        for key in sorted(network_groups.keys())
-        if key not in NETWORK_COLORS
+    points_payload = [
+        {
+            "lat": point.lat,
+            "lon": point.lon,
+            "day": point.send_time.date().isoformat(),
+            "operator": point.operator or "Desconocido",
+            "network": point.network_label or "Desconocida",
+            "tooltip": _point_to_tooltip(point),
+            "timestamp": point.send_time.isoformat(),
+        }
+        for point in points_sorted
     ]
 
-    grouped_layers = {
-        "Días": sorted_day_layers,
-        "Operadores": sorted_operator_layers,
-        "Tecnologías": sorted_network_layers,
-    }
-    GroupedLayerControl(grouped_layers, collapsed=False).add_to(fmap)
+    initial_day = days[0] if days else "All"
+
+    fmap.get_root().add_child(
+        FilterPanel(
+            points_data=points_payload,
+            day_options=days,
+            operator_options=operators,
+            network_options=networks,
+            operator_colors=OPERATOR_COLORS,
+            initial_day=initial_day,
+        )
+    )
 
     fmap.get_root().add_child(OperatorLegend(OPERATOR_COLORS))
     fmap.fit_bounds([(p.lat, p.lon) for p in points_sorted])
