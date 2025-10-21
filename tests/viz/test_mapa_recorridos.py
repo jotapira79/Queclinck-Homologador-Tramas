@@ -152,6 +152,47 @@ def test_filter_points_accepts_all_keyword_for_every_filter():
     assert _filter_points(points, day="all") == points
 
 
+def test_filter_points_day_filter_has_priority():
+    day_one_point = _make_point(0, operator="Claro", network="3G")
+    day_two_point = _make_point(86400, operator="Claro", network="3G")
+    extra_day_two = _make_point(86400 + 60, operator="Entel", network="2G")
+
+    points = [day_one_point, day_two_point, extra_day_two]
+
+    result = _filter_points(
+        points,
+        day="2025-10-10",
+        operators=["Claro"],
+        networks=["3G"],
+    )
+
+    assert result == [day_one_point]
+
+
+def test_filter_points_operator_and_network_depend_on_day():
+    points = [
+        _make_point(0, operator="Claro", network="3G"),
+        _make_point(86400, operator="Entel", network="4G"),
+    ]
+
+    assert _filter_points(points, operators=["Claro"]) == points
+    assert _filter_points(points, networks=["3G"]) == points
+
+
+def test_filter_points_returns_empty_when_combination_not_found():
+    points = [
+        _make_point(0, operator="Claro", network="3G"),
+        _make_point(60, operator="Claro", network="3G"),
+    ]
+
+    assert _filter_points(
+        points,
+        day="2025-10-10",
+        operators=["Entel"],
+        networks=["4G"],
+    ) == []
+
+
 def test_enriched_database_creates_columns_and_values(tmp_path: Path):
     base_dir = _prepare_sample_databases(tmp_path)
 

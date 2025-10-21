@@ -400,22 +400,17 @@ def _filter_points(
     operators: Optional[Sequence[str]] = None,
     networks: Optional[Sequence[str]] = None,
 ) -> List[LocationPoint]:
-    result = []
+    """Filtra puntos aplicando prioridad al día antes que otros filtros."""
 
     normalized_ops = (
         {op.strip().lower() for op in operators if op is not None}
         if operators
         else None
     )
-    operator_set = None if not normalized_ops or "all" in normalized_ops else normalized_ops
-
     normalized_networks = (
         {nt.strip().lower() for nt in networks if nt is not None}
         if networks
         else None
-    )
-    network_set = (
-        None if not normalized_networks or "all" in normalized_networks else normalized_networks
     )
 
     day_value: Optional[datetime] = None
@@ -426,12 +421,31 @@ def _filter_points(
                 day_value = datetime.strptime(day_clean, "%Y-%m-%d")
             except ValueError as exc:  # pragma: no cover - validación de CLI
                 raise ValueError("El día debe tener formato YYYY-MM-DD") from exc
-    for point in points:
-        if day_value and point.send_time.date() != day_value.date():
+
+    # Priorizamos la selección por día. Si no se especifica un día, se mantienen todos
+    # los puntos disponibles y los filtros complementarios quedan deshabilitados.
+    if day_value is None:
+        day_filtered = list(points)
+        operator_set = None
+        network_set = None
+    else:
+        day_filtered = [
+            point for point in points if point.send_time.date() == day_value.date()
+        ]
+        operator_set = (
+            None if not normalized_ops or "all" in normalized_ops else normalized_ops
+        )
+        network_set = (
+            None
+            if not normalized_networks or "all" in normalized_networks
+            else normalized_networks
+        )
+
+    result: List[LocationPoint] = []
+    for point in day_filtered:
+        if operator_set and (point.operator or "").lower() not in operator_set:
             continue
-        if operator_set and point.operator.lower() not in operator_set:
-            continue
-        if network_set and point.network_label.lower() not in network_set:
+        if network_set and (point.network_label or "").lower() not in network_set:
             continue
         result.append(point)
     return result
