@@ -190,7 +190,7 @@ def _load_locations_from_db(
     _register_sqlite_helpers(conn)
     conn.row_factory = sqlite3.Row
     try:
-        table = _detect_table(conn, report, model)
+        table = _detect_table(conn, report, model, imei)
         columns = _load_table_schema(conn, table)
 
         imei_col = _first_existing(IMEI_CANDIDATES, columns)
@@ -313,7 +313,7 @@ def _load_gtinf_records(db_path: Path, model: str, imei: str) -> List[InfoRecord
     conn = ensure_db(db_path)
     _register_sqlite_helpers(conn)
     conn.row_factory = sqlite3.Row
-    table = _detect_table(conn, "gtinf", model)
+    table = _detect_table(conn, "gtinf", model, imei)
     columns = _load_table_schema(conn, table)
 
     imei_col = _first_existing(IMEI_CANDIDATES, columns)
@@ -576,6 +576,7 @@ class FilterPanel(MacroElement):
                 var networkSelect = document.getElementById(panelId + "_network");
                 var markersLayer = L.layerGroup().addTo(mapObj);
                 var routeLayer = L.layerGroup().addTo(mapObj);
+                var lastSelectedDay = null;
 
                 function colorForOperator(operator) {
                     if (operatorColors.hasOwnProperty(operator)) {
@@ -607,37 +608,91 @@ class FilterPanel(MacroElement):
                     return chosen;
                 }
 
+                function collectUnique(points, key) {
+                    var seen = {};
+                    for (var i = 0; i < points.length; i += 1) {
+                        var value = points[i][key];
+                        if (value && !seen.hasOwnProperty(value)) {
+                            seen[value] = true;
+                        }
+                    }
+                    var values = [];
+                    for (var candidate in seen) {
+                        if (seen.hasOwnProperty(candidate)) {
+                            values.push(candidate);
+                        }
+                    }
+                    values.sort();
+                    return values;
+                }
+
+                function populateSelect(selectElement, values, preserveSelection) {
+                    var previousValue = preserveSelection ? selectElement.value : "All";
+                    selectElement.innerHTML = "";
+                    var allOption = document.createElement("option");
+                    allOption.value = "All";
+                    allOption.textContent = "Todos";
+                    selectElement.appendChild(allOption);
+                    for (var i = 0; i < values.length; i += 1) {
+                        var option = document.createElement("option");
+                        option.value = values[i];
+                        option.textContent = values[i];
+                        selectElement.appendChild(option);
+                    }
+                    if (preserveSelection && values.indexOf(previousValue) !== -1) {
+                        selectElement.value = previousValue;
+                    } else {
+                        selectElement.value = "All";
+                    }
+                }
+
+                function pointsForDay(dayValue) {
+                    var dayPoints = [];
+                    for (var i = 0; i < pointsData.length; i += 1) {
+                        var point = pointsData[i];
+                        if (point.day === dayValue) {
+                            dayPoints.push(point);
+                        }
+                    }
+                    return dayPoints;
+                }
+
                 function updateFilters() {
                     var selectedDay = daySelect.value;
                     var dayActive = selectedDay && selectedDay !== "All";
-                    operatorSelect.disabled = !dayActive;
-                    networkSelect.disabled = !dayActive;
+                    var filtered = [];
+                    var basePoints;
+
                     if (!dayActive) {
-                        operatorSelect.value = "All";
-                        networkSelect.value = "All";
+                        operatorSelect.disabled = true;
+                        networkSelect.disabled = true;
+                        populateSelect(operatorSelect, [], false);
+                        populateSelect(networkSelect, [], false);
+                        basePoints = pointsData.slice();
+                        lastSelectedDay = null;
+                    } else {
+                        var dayPoints = pointsForDay(selectedDay);
+                        var preserve = selectedDay === lastSelectedDay;
+                        populateSelect(operatorSelect, collectUnique(dayPoints, "operator"), preserve);
+                        populateSelect(networkSelect, collectUnique(dayPoints, "network"), preserve);
+                        operatorSelect.disabled = false;
+                        networkSelect.disabled = false;
+                        basePoints = dayPoints;
+                        lastSelectedDay = selectedDay;
                     }
 
-                    var filtered = [];
-                    for (var i = 0; i < pointsData.length; i += 1) {
-                        var point = pointsData[i];
-                        if (dayActive && point.day !== selectedDay) {
+                    var opValue = operatorSelect.value || "All";
+                    var netValue = networkSelect.value || "All";
+
+                    for (var i = 0; i < basePoints.length; i += 1) {
+                        var point = basePoints[i];
+                        if (opValue !== "All" && point.operator !== opValue) {
                             continue;
                         }
-                        if (dayActive) {
-                            var opValue = operatorSelect.value || "All";
-                            if (opValue !== "All" && point.operator !== opValue) {
-                                continue;
-                            }
-                            var netValue = networkSelect.value || "All";
-                            if (netValue !== "All" && point.network !== netValue) {
-                                continue;
-                            }
+                        if (netValue !== "All" && point.network !== netValue) {
+                            continue;
                         }
                         filtered.push(point);
-                    }
-
-                    if (!dayActive) {
-                        filtered = pointsData.slice();
                     }
 
                     filtered.sort(function(a, b) {
@@ -779,6 +834,7 @@ def build_points(
                 report=report,
                 model=model_clean,
                 base_dir=base_dir,
+                imei=imei,
             )
         except FileNotFoundError:
             searched_paths.append(db_path)
