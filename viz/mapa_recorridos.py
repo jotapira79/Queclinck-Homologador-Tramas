@@ -795,6 +795,12 @@ class FilterPanel(MacroElement):
                     } else {
                         selectElement.value = "All";
                     }
+                    if (
+                        selectElement.value !== "All" &&
+                        values.indexOf(selectElement.value) === -1
+                    ) {
+                        selectElement.value = "All";
+                    }
                 }
 
                 function populateReportSelect(points, preserveSelection) {
@@ -824,10 +830,12 @@ class FilterPanel(MacroElement):
                 }
 
                 function pointsForDay(dayValue) {
+                    var normalizedDay = (dayValue || "").trim();
                     var dayPoints = [];
                     for (var i = 0; i < pointsData.length; i += 1) {
                         var point = pointsData[i];
-                        if (point.day === dayValue) {
+                        var pointDay = (point.day || "").trim();
+                        if (pointDay === normalizedDay) {
                             dayPoints.push(point);
                         }
                     }
@@ -838,12 +846,15 @@ class FilterPanel(MacroElement):
                     if (!points.length) {
                         return [];
                     }
-                    if (!reportValue || reportValue === "AMBOS" || reportValue === "All") {
+                    var normalizedReport = (reportValue || "").trim().toUpperCase();
+                    if (!normalizedReport || normalizedReport === "AMBOS" || normalizedReport === "ALL") {
                         return points.slice();
                     }
+                    var normalizedValue = normalizedReport;
                     var filtered = [];
                     for (var i = 0; i < points.length; i += 1) {
-                        if (points[i].report === reportValue) {
+                        var pointReport = ((points[i].report || "").trim().toUpperCase());
+                        if (pointReport === normalizedValue) {
                             filtered.push(points[i]);
                         }
                     }
@@ -855,19 +866,29 @@ class FilterPanel(MacroElement):
                     var filtered = [];
                     var basePoints;
 
+                    console.debug('[Filters] total points:', pointsData.length);
+                    console.debug('[Filters] selectedDay:', selectedDay);
+
                     if (selectedDay && selectedDay !== "All") {
                         basePoints = pointsForDay(selectedDay);
                     } else {
                         basePoints = pointsData.slice();
                     }
 
+                    console.debug('[Filters] basePoints:', basePoints.length);
+
                     var dayChanged = selectedDay !== lastSelections.day;
                     populateReportSelect(basePoints, !dayChanged);
 
                     var selectedReport = reportSelect.value || "AMBOS";
+                    if (selectedReport === "AMBOS") {
+                        selectedReport = "All";
+                    }
+                    console.debug('[Filters] selectedReport:', selectedReport);
                     var reportChanged = dayChanged || selectedReport !== lastSelections.report;
 
                     var reportFiltered = filterByReport(basePoints, selectedReport);
+                    console.debug('[Filters] reportFiltered:', reportFiltered.length);
 
                     populateSelect(
                         operatorSelect,
@@ -885,6 +906,7 @@ class FilterPanel(MacroElement):
 
                     var opValue = operatorSelect.value || "All";
                     var netValue = networkSelect.value || "All";
+                    console.debug('[Filters] operator value:', opValue, 'network value:', netValue);
 
                     for (var i = 0; i < reportFiltered.length; i += 1) {
                         var point = reportFiltered[i];
@@ -896,6 +918,8 @@ class FilterPanel(MacroElement):
                         }
                         filtered.push(point);
                     }
+
+                    console.debug('[Filters] final filtered:', filtered.length);
 
                     filtered.sort(function(a, b) {
                         if (a.timestamp < b.timestamp) {
