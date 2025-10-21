@@ -47,8 +47,6 @@ from .utils import (
     CSQ_BER_CANDIDATES,
     CSQ_CANDIDATES,
     IMEI_CANDIDATES,
-    LAT_CANDIDATES,
-    LON_CANDIDATES,
     MCC_CANDIDATES,
     MNC_CANDIDATES,
     NETWORK_TYPE_CANDIDATES,
@@ -85,6 +83,7 @@ class LocationPoint:
     signal_dbm: Optional[float] = None
     csq: Optional[float] = None
     csq_ber: Optional[int] = None
+    day_iso: Optional[str] = None
 
 
 @dataclass
@@ -118,24 +117,6 @@ _ASSOCIATION_MAX_DELTA_SECONDS = 60
 # Tipos de reporte -----------------------------------------------------------
 
 
-REPORT_HEADER_CANDIDATES = [
-    "header",
-    "message_header",
-    "msg_header",
-    "message_type",
-    "report_header",
-]
-
-REPORT_PAYLOAD_CANDIDATES = [
-    "payload",
-    "raw_payload",
-    "raw_message",
-    "message",
-    "full_message",
-    "raw",
-]
-
-
 def _normalize_text(value: object) -> str:
     if value in (None, ""):
         return ""
@@ -147,39 +128,31 @@ def _normalize_text(value: object) -> str:
     return str(value)
 
 
-def _detect_report_kind(raw_payload: Optional[dict]) -> str:
-    """Intenta clasificar el mensaje como BUFFER o RESP."""
-
-    if not raw_payload:
-        return "RESP"
-
-    def _match(text: str) -> Optional[str]:
-        if not text:
+def _parse_send_time(value: object) -> Optional[datetime]:
+    text = _normalize_text(value)
+    if not text:
+        return None
+    if len(text) >= 14 and text[:14].isdigit():
+        try:
+            return datetime.strptime(text[:14], "%Y%m%d%H%M%S")
+        except ValueError:
             return None
-        upper_text = text.upper()
-        if "+BUFF:" in upper_text:
-            return "BUFFER"
-        if "+RESP:" in upper_text:
-            return "RESP"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
         return None
 
-    for key in REPORT_HEADER_CANDIDATES:
-        if key in raw_payload:
-            kind = _match(_normalize_text(raw_payload.get(key)))
-            if kind:
-                return kind
 
-    for key in REPORT_PAYLOAD_CANDIDATES:
-        if key in raw_payload:
-            kind = _match(_normalize_text(raw_payload.get(key)))
-            if kind:
-                return kind
+def _day_iso(value: Optional[datetime]) -> Optional[str]:
+    return value.date().isoformat() if value else None
 
-    for value in raw_payload.values():
-        kind = _match(_normalize_text(value))
-        if kind:
-            return kind
 
+def _report_kind_from_header(header: object) -> str:
+    text = _normalize_text(header).upper()
+    if text.startswith("+BUFF:"):
+        return "BUFFER"
+    if text.startswith("+RESP:"):
+        return "RESP"
     return "RESP"
 
 
@@ -251,6 +224,55 @@ def _register_sqlite_helpers(conn: sqlite3.Connection) -> None:
 
 # Lectura de datos -----------------------------------------------------------
 
+
+_LOCATION_COLUMN_CANDIDATES = {
+    "imei": IMEI_CANDIDATES,
+    "lat": ["lat"],
+    "lon": ["lon"],
+    "send_time": ["send_time"],
+    "header": ["header"],
+    "operator": ["operador"],
+    "network": ["tecnologia_celular"],
+    "signal_quality": ["calidad_senal"],
+}
+
+
+def _resolve_location_table(
+    conn: sqlite3.Connection, report: str, model: str, imei: str
+) -> tuple[str, dict[str, str]]:
+    try:
+        primary_table = _detect_table(conn, report, model, imei)
+    except Exception:
+        primary_table = None
+
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+    ).fetchall()
+    table_names = [row[0] for row in rows]
+    ordered_tables: List[str] = []
+    if primary_table:
+        ordered_tables.append(primary_table)
+    for name in table_names:
+        if name not in ordered_tables:
+            ordered_tables.append(name)
+
+    for table in ordered_tables:
+        columns = _load_table_schema(conn, table)
+        column_map: dict[str, str] = {}
+        for key, candidates in _LOCATION_COLUMN_CANDIDATES.items():
+            column = _first_existing(candidates, columns)
+            if not column:
+                column_map = {}
+                break
+            column_map[key] = column
+        if column_map:
+            return table, column_map
+
+    raise ValueError(
+        "No se encontró una tabla con las columnas requeridas para ubicaciones"
+    )
+
+
 def _load_locations_from_db(
     db_path: Path,
     report: str,
@@ -264,116 +286,60 @@ def _load_locations_from_db(
     _register_sqlite_helpers(conn)
     conn.row_factory = sqlite3.Row
     try:
-        table = _detect_table(conn, report, model, imei)
-        columns = _load_table_schema(conn, table)
+        table, column_map = _resolve_location_table(conn, report, model, imei)
 
-        imei_col = _first_existing(IMEI_CANDIDATES, columns)
-        if not imei_col:
-            raise ValueError(f"La tabla {table} no contiene columna IMEI reconocida")
+        imei_col = column_map["imei"]
+        lat_col = column_map["lat"]
+        lon_col = column_map["lon"]
+        time_col = column_map["send_time"]
+        header_col = column_map["header"]
+        operator_col = column_map["operator"]
+        network_col = column_map["network"]
+        signal_col = column_map["signal_quality"]
 
-        lat_col = _first_existing(LAT_CANDIDATES, columns)
-        lon_col = _first_existing(LON_CANDIDATES, columns)
-        if not lat_col or not lon_col:
-            return []
+        sql = f"""
+        SELECT
+            "{header_col}" AS header,
+            "{lat_col}" AS lat,
+            "{lon_col}" AS lon,
+            "{time_col}" AS send_time,
+            "{operator_col}" AS operador,
+            "{network_col}" AS tecnologia_celular,
+            "{signal_col}" AS calidad_senal
+        FROM "{table}"
+        WHERE {_normalized_imei_expression(imei_col)} = :imei
+        ORDER BY "{time_col}"
+        """
 
-        time_col = _first_existing(TIME_CANDIDATES, columns)
-        if not time_col:
-            raise ValueError(f"La tabla {table} no contiene columna send_time")
-
-        mcc_col = _first_existing(MCC_CANDIDATES, columns)
-        mnc_col = _first_existing(MNC_CANDIDATES, columns)
-        csq_col = _first_existing(CSQ_CANDIDATES, columns)
-        ber_col = _first_existing(CSQ_BER_CANDIDATES, columns)
-        tech_col = "tecnologia_celular" if "tecnologia_celular" in columns else None
-        quality_col = "calidad_senal" if "calidad_senal" in columns else None
-        dbm_col = "nivel_senal_dbm" if "nivel_senal_dbm" in columns else None
-        operator_col = "operador" if "operador" in columns else None
-
-        query_cols = {lat_col, lon_col, time_col, imei_col}
-        if mcc_col:
-            query_cols.add(mcc_col)
-        if mnc_col:
-            query_cols.add(mnc_col)
-        if csq_col:
-            query_cols.add(csq_col)
-        if ber_col:
-            query_cols.add(ber_col)
-        if tech_col:
-            query_cols.add(tech_col)
-        if quality_col:
-            query_cols.add(quality_col)
-        if dbm_col:
-            query_cols.add(dbm_col)
-        if operator_col:
-            query_cols.add(operator_col)
-        query_cols.add("report_type") if "report_type" in columns else None
-
-        imei_expr = _normalized_imei_expression(imei_col)
-        select_clause = ", ".join(f'"{col}"' for col in query_cols)
-        sql = (
-            f'SELECT {select_clause} FROM "{table}" '
-            f"WHERE {imei_expr} = ? ORDER BY \"{time_col}\""
-        )
+        normalized_imei = _normalized_imei_value(imei)
+        rows = conn.execute(sql, {"imei": normalized_imei}).fetchall()
 
         points: List[LocationPoint] = []
-        normalized_imei = _normalized_imei_value(imei)
-        for row in conn.execute(sql, (normalized_imei,)):
-            raw_lat = _safe_float(row[lat_col])
-            raw_lon = _safe_float(row[lon_col])
-            dt = _parse_datetime(row[time_col])
-            if raw_lat is None or raw_lon is None or dt is None:
+        for row in rows:
+            lat = _safe_float(row["lat"])
+            lon = _safe_float(row["lon"])
+            send_dt = _parse_send_time(row["send_time"])
+            if lat is None or lon is None or send_dt is None:
                 continue
-            mcc = _safe_int(row[mcc_col]) if mcc_col else None
-            mnc = _safe_int(row[mnc_col]) if mnc_col else None
-            lat, lon = _swap_coordinates_if_needed(raw_lat, raw_lon, mcc)
-            if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+            if not _valid_coordinates(lat, lon):
                 continue
-
-            operator = ""
-            if operator_col:
-                raw_operator = row[operator_col]
-                if raw_operator not in (None, ""):
-                    operator = str(raw_operator).strip()
-            if not operator:
-                operator = _normalize_operator(mcc, mnc)
-            network_label = "Desconocida"
-            if tech_col:
-                raw_tech = row[tech_col]
-                if raw_tech not in (None, ""):
-                    network_label = str(raw_tech).strip()
-            signal_quality = "Desconocida"
-            if quality_col:
-                raw_quality = row[quality_col]
-                if raw_quality not in (None, ""):
-                    signal_quality = str(raw_quality).strip()
-            csq = _safe_float(row[csq_col]) if csq_col else None
-            csq_ber = _safe_int(row[ber_col]) if ber_col else None
-            signal_dbm = _safe_float(row[dbm_col]) if dbm_col else None
-            if signal_dbm is None and network_label not in (None, "", "Desconocida"):
-                computed_quality, computed_dbm = _classify_signal(
-                    network_label, csq, csq_ber
-                )
-                if signal_quality == "Desconocida":
-                    signal_quality = computed_quality
-                signal_dbm = computed_dbm
-            raw_payload = {col: row[col] for col in row.keys()}
+            operator_value = _normalize_text(row["operador"]).strip() or "Desconocido"
+            network_label = _normalize_text(row["tecnologia_celular"]) or "Desconocida"
+            signal_quality = _normalize_text(row["calidad_senal"]) or "Desconocida"
+            raw_payload = dict(row)
             points.append(
                 LocationPoint(
-                    lat=lat,
-                    lon=lon,
-                    send_time=dt,
+                    lat=float(lat),
+                    lon=float(lon),
+                    send_time=send_dt,
                     imei=imei,
                     source=report.lower(),
-                    report_kind=_detect_report_kind(raw_payload),
-                    operator=operator,
-                    mcc=mcc,
-                    mnc=mnc,
+                    operator=operator_value,
+                    report_kind=_report_kind_from_header(row["header"]),
                     raw_payload=raw_payload,
                     network_label=network_label or "Desconocida",
                     signal_quality=signal_quality or "Desconocida",
-                    signal_dbm=signal_dbm,
-                    csq=csq,
-                    csq_ber=csq_ber,
+                    day_iso=_day_iso(send_dt),
                 )
             )
         return points
@@ -533,7 +499,7 @@ def _filter_points(
     day_value: Optional[datetime] = None
     if day:
         day_clean = day.strip()
-        if day_clean.lower() != "all":
+        if day_clean.lower() not in {"all", "todos"}:
             try:
                 day_value = datetime.strptime(day_clean, "%Y-%m-%d")
             except ValueError as exc:  # pragma: no cover - validación de CLI
@@ -587,7 +553,7 @@ def _point_to_tooltip(point: LocationPoint) -> str:
         f"Coordenadas: {point.lat:.5f}, {point.lon:.5f}",
         f"Operador: {point.operator}",
         f"Tecnología: {point.network_label}",
-        f"Señal: {point.signal_quality}",
+        f"Calidad de señal: {point.signal_quality}",
     ]
     if point.signal_dbm is not None:
         parts.append(f"Nivel: {point.signal_dbm:.1f} dBm")
@@ -665,7 +631,7 @@ class FilterPanel(MacroElement):
                     <div style="font-weight: bold; margin-bottom: 8px; font-size: 14px;">Filtros</div>
                     <label for="{{ this.get_name() }}_day" style="display:block; font-weight:bold; margin-bottom:4px;">Día</label>
                     <select id="{{ this.get_name() }}_day" style="width:100%; margin-bottom:10px; padding:4px;">
-                        <option value="All">Todos</option>
+                        <option value="All" {% if this.initial_day == "All" %}selected{% endif %}>Todos</option>
                         {% for day in this.day_options %}
                         <option value="{{ day }}" {% if day == this.initial_day %}selected{% endif %}>{{ day }}</option>
                         {% endfor %}
@@ -1019,17 +985,18 @@ def render_interactive_map(
         {
             "lat": point.lat,
             "lon": point.lon,
-            "day": point.send_time.date().isoformat(),
+            "day": point.day_iso or point.send_time.date().isoformat(),
             "report": point.report_kind,
             "operator": point.operator or "Desconocido",
             "network": point.network_label or "Desconocida",
+            "signal_quality": point.signal_quality or "Desconocida",
             "tooltip": _point_to_tooltip(point),
             "timestamp": point.send_time.isoformat(),
         }
         for point in points_sorted
     ]
 
-    initial_day = days[0] if days else "All"
+    initial_day = "All"
 
     fmap.get_root().add_child(
         FilterPanel(
@@ -1068,24 +1035,20 @@ def build_points(
     all_points: List[LocationPoint] = []
     searched_paths: List[Path] = []
     for report in reports_to_use:
-        candidate_paths = [
-            base_dir / f"{report}_{model_clean}_map.db",
-            base_dir / f"{report}_{model_clean}.db",
-        ]
-        db_path = next((path for path in candidate_paths if path.exists()), candidate_paths[0])
+        map_path = base_dir / f"{report}_{model_clean}_map.db"
         try:
-            enriched_path = ensure_enriched_database(
+            ensure_enriched_database(
                 report=report,
                 model=model_clean,
                 base_dir=base_dir,
                 imei=imei,
             )
         except FileNotFoundError:
-            searched_paths.extend(candidate_paths)
+            searched_paths.append(map_path)
             continue
 
-        searched_paths.append(enriched_path)
-        points = _load_locations_from_db(enriched_path, report, model_clean, imei)
+        searched_paths.append(map_path)
+        points = _load_locations_from_db(map_path, report, model_clean, imei)
         all_points.extend(points)
 
     if not all_points:
