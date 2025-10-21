@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -52,6 +53,7 @@ from .utils import (
     MNC_CANDIDATES,
     NETWORK_TYPE_CANDIDATES,
     NETWORK_TYPE_MAP,
+    OPERATOR_CANDIDATES,
     TIME_CANDIDATES,
     classify_signal as _classify_signal,
     detect_table as _detect_table,
@@ -93,6 +95,7 @@ class InfoRecord:
     raw_network_value: Optional[int]
     csq: Optional[float] = None
     csq_ber: Optional[int] = None
+    operator: str = "Desconocido"
 
 NETWORK_COLORS = {
     "2G": "#1f77b4",
@@ -109,6 +112,8 @@ OPERATOR_COLORS = {
     "WOM": "#9467bd",
     "Desconocido": "#7f7f7f",
 }
+
+_ASSOCIATION_MAX_DELTA_SECONDS = 60
 
 # Tipos de reporte -----------------------------------------------------------
 
@@ -394,12 +399,21 @@ def _load_gtinf_records(db_path: Path, model: str, imei: str) -> List[InfoRecord
 
     csq_col = _first_existing(CSQ_CANDIDATES, columns)
     ber_col = _first_existing(CSQ_BER_CANDIDATES, columns)
+    operator_col = _first_existing(OPERATOR_CANDIDATES, columns)
+    mcc_col = _first_existing(MCC_CANDIDATES, columns)
+    mnc_col = _first_existing(MNC_CANDIDATES, columns)
 
     query_cols = {imei_col, time_col, network_col}
     if csq_col:
         query_cols.add(csq_col)
     if ber_col:
         query_cols.add(ber_col)
+    if operator_col:
+        query_cols.add(operator_col)
+    if mcc_col:
+        query_cols.add(mcc_col)
+    if mnc_col:
+        query_cols.add(mnc_col)
 
     imei_expr = _normalized_imei_expression(imei_col)
     select_clause = ", ".join(f'"{col}"' for col in query_cols)
@@ -418,6 +432,17 @@ def _load_gtinf_records(db_path: Path, model: str, imei: str) -> List[InfoRecord
         network_label = NETWORK_TYPE_MAP.get(raw_network, "Desconocida")
         csq = _safe_float(row[csq_col]) if csq_col else None
         csq_ber = _safe_int(row[ber_col]) if ber_col else None
+        operator_value = "Desconocido"
+        if operator_col:
+            raw_operator = row[operator_col]
+            if raw_operator not in (None, ""):
+                operator_value = str(raw_operator).strip() or "Desconocido"
+        if operator_value in ("", "Desconocido"):
+            mcc_value = _safe_int(row[mcc_col]) if mcc_col else None
+            mnc_value = _safe_int(row[mnc_col]) if mnc_col else None
+            normalized = _normalize_operator(mcc_value, mnc_value)
+            if normalized != "Desconocido" or operator_value == "":
+                operator_value = normalized
         info_records.append(
             InfoRecord(
                 imei=imei,
@@ -426,6 +451,7 @@ def _load_gtinf_records(db_path: Path, model: str, imei: str) -> List[InfoRecord
                 raw_network_value=raw_network,
                 csq=csq,
                 csq_ber=csq_ber,
+                operator=operator_value or "Desconocido",
             )
         )
     conn.close()
@@ -439,25 +465,41 @@ def _associate_info(points: List[LocationPoint], infos: List[InfoRecord]) -> Non
     if not points or not infos:
         return
     infos_sorted = sorted(infos, key=lambda r: r.send_time)
-    idx = 0
-    current_info: Optional[InfoRecord] = None
+    info_times = [record.send_time for record in infos_sorted]
     for point in sorted(points, key=lambda p: p.send_time):
-        while idx < len(infos_sorted) and infos_sorted[idx].send_time <= point.send_time:
-            current_info = infos_sorted[idx]
-            idx += 1
-        if current_info is None:
-            continue
-        if point.network_label not in (None, "", "Desconocida"):
-            if point.signal_quality not in (None, "", "Desconocida") and point.signal_dbm is not None:
+        index = bisect_left(info_times, point.send_time)
+        candidates: List[InfoRecord] = []
+        if 0 <= index < len(infos_sorted):
+            candidates.append(infos_sorted[index])
+        if index > 0:
+            candidates.append(infos_sorted[index - 1])
+
+        chosen: Optional[InfoRecord] = None
+        best_delta = float("inf")
+        for candidate in candidates:
+            delta = abs((candidate.send_time - point.send_time).total_seconds())
+            if delta > _ASSOCIATION_MAX_DELTA_SECONDS:
                 continue
-        point.network_label = current_info.network_label
-        point.csq = current_info.csq
-        point.csq_ber = current_info.csq_ber
+            if chosen is None or delta < best_delta:
+                chosen = candidate
+                best_delta = delta
+            elif delta == best_delta:
+                if chosen.send_time > point.send_time >= candidate.send_time:
+                    chosen = candidate
+
+        if chosen is None:
+            continue
+
+        point.network_label = chosen.network_label
+        point.csq = chosen.csq
+        point.csq_ber = chosen.csq_ber
         quality, dbm = _classify_signal(
-            current_info.network_label, current_info.csq, current_info.csq_ber
+            chosen.network_label, chosen.csq, chosen.csq_ber
         )
         point.signal_quality = quality
         point.signal_dbm = dbm
+        if chosen.operator and chosen.operator not in {"", "Desconocido"}:
+            point.operator = chosen.operator
 
 
 # Filtros --------------------------------------------------------------------
@@ -493,9 +535,14 @@ def _filter_points(
         day_clean = day.strip()
         if day_clean.lower() != "all":
             try:
-                day_value = datetime.strptime(day_clean, "%Y-%m-%d")
+                if len(day_clean) == 8 and day_clean.isdigit():
+                    day_value = datetime.strptime(day_clean, "%Y%m%d")
+                else:
+                    day_value = datetime.strptime(day_clean, "%Y-%m-%d")
             except ValueError as exc:  # pragma: no cover - validación de CLI
-                raise ValueError("El día debe tener formato YYYY-MM-DD") from exc
+                raise ValueError(
+                    "El día debe tener formato YYYY-MM-DD o YYYYMMDD"
+                ) from exc
 
     if day_value is None:
         base_points = list(points)
@@ -504,7 +551,7 @@ def _filter_points(
             point for point in points if point.send_time.date() == day_value.date()
         ]
 
-    if normalized_reports and "all" not in normalized_reports and "ambos" not in normalized_reports:
+    if normalized_reports and normalized_reports.isdisjoint({"all", "ambos", "todos"}):
         base_points = [
             point
             for point in base_points
@@ -630,11 +677,9 @@ class FilterPanel(MacroElement):
                     </select>
                     <label for="{{ this.get_name() }}_report" style="display:block; font-weight:bold; margin-bottom:4px;">Tipo de reporte</label>
                     <select id="{{ this.get_name() }}_report" style="width:100%; margin-bottom:10px; padding:4px;">
-                        <option value="All" selected>Todos</option>
-                        <option value="AMBOS">Ambos</option>
-                        {% for report in this.report_options %}
-                        <option value="{{ report }}">{{ report }}</option>
-                        {% endfor %}
+                        <option value="AMBOS" selected>AMBOS</option>
+                        <option value="BUFFER">BUFFER</option>
+                        <option value="RESP">RESP</option>
                     </select>
                     <label for="{{ this.get_name() }}_operator" style="display:block; font-weight:bold; margin-bottom:4px;">Operador</label>
                     <select id="{{ this.get_name() }}_operator" style="width:100%; margin-bottom:10px; padding:4px;">
@@ -672,6 +717,50 @@ class FilterPanel(MacroElement):
                     operator: null,
                     network: null
                 };
+
+                function logStage(stage, payload) {
+                    if (typeof console !== "undefined" && console.debug) {
+                        console.debug("[FilterPanel]", stage, payload || {});
+                    }
+                }
+
+                function normalizeDayValue(value) {
+                    if (value === undefined || value === null) {
+                        return "";
+                    }
+                    var text = String(value).trim();
+                    if (!text) {
+                        return "";
+                    }
+                    var lower = text.toLowerCase();
+                    if (lower === "all" || lower === "todos") {
+                        return "All";
+                    }
+                    if (/^[0-9]{8}$/.test(text)) {
+                        return text.slice(0, 4) + "-" + text.slice(4, 6) + "-" + text.slice(6, 8);
+                    }
+                    return text;
+                }
+
+                function normalizeReportValue(value) {
+                    if (value === undefined || value === null) {
+                        return "AMBOS";
+                    }
+                    var text = String(value).trim().toUpperCase();
+                    if (!text || text === "ALL" || text === "TODOS") {
+                        return "AMBOS";
+                    }
+                    if (text === "BUFFER" || text === "RESP" || text === "AMBOS") {
+                        return text;
+                    }
+                    if (text.indexOf("BUFFER") !== -1) {
+                        return "BUFFER";
+                    }
+                    if (text.indexOf("RESP") !== -1) {
+                        return "RESP";
+                    }
+                    return text;
+                }
 
                 function colorForOperator(operator) {
                     if (operatorColors.hasOwnProperty(operator)) {
@@ -757,11 +846,46 @@ class FilterPanel(MacroElement):
                     }
                 }
 
+                function populateReportSelect(points, preserveSelection) {
+                    var availableSet = { "AMBOS": true };
+                    for (var idx = 0; idx < points.length; idx += 1) {
+                        var normalized = normalizeReportValue(points[idx].report);
+                        if (normalized) {
+                            availableSet[normalized] = true;
+                        }
+                    }
+                    var previousValue = preserveSelection ? normalizeReportValue(reportSelect.value) : "AMBOS";
+                    if (!availableSet[previousValue]) {
+                        previousValue = "AMBOS";
+                    }
+                    var order = ["AMBOS", "BUFFER", "RESP"];
+                    reportSelect.innerHTML = "";
+                    for (var i = 0; i < order.length; i += 1) {
+                        var option = document.createElement("option");
+                        option.value = order[i];
+                        option.textContent = order[i];
+                        if (order[i] !== "AMBOS" && !availableSet[order[i]]) {
+                            option.disabled = true;
+                        }
+                        reportSelect.appendChild(option);
+                    }
+                    reportSelect.value = previousValue;
+                    return previousValue;
+                }
+
                 function pointsForDay(dayValue) {
+                    var normalizedDay = normalizeDayValue(dayValue);
+                    if (!normalizedDay || normalizedDay === "All") {
+                        return pointsData.slice();
+                    }
                     var dayPoints = [];
                     for (var i = 0; i < pointsData.length; i += 1) {
                         var point = pointsData[i];
-                        if (point.day === dayValue) {
+                        var candidateDay = normalizeDayValue(point.day);
+                        if (!candidateDay && point.day_key) {
+                            candidateDay = normalizeDayValue(point.day_key);
+                        }
+                        if (candidateDay === normalizedDay) {
                             dayPoints.push(point);
                         }
                     }
@@ -772,12 +896,13 @@ class FilterPanel(MacroElement):
                     if (!points.length) {
                         return [];
                     }
-                    if (!reportValue || reportValue === "All" || reportValue === "AMBOS") {
+                    var normalizedReport = normalizeReportValue(reportValue);
+                    if (!normalizedReport || normalizedReport === "AMBOS") {
                         return points.slice();
                     }
                     var filtered = [];
                     for (var i = 0; i < points.length; i += 1) {
-                        if (points[i].report === reportValue) {
+                        if (normalizeReportValue(points[i].report) === normalizedReport) {
                             filtered.push(points[i]);
                         }
                     }
@@ -785,29 +910,19 @@ class FilterPanel(MacroElement):
                 }
 
                 function updateFilters() {
-                    var selectedDay = daySelect.value;
+                    var selectedDayRaw = daySelect.value;
+                    var normalizedDay = normalizeDayValue(selectedDayRaw) || "All";
+                    var basePoints = pointsForDay(normalizedDay);
                     var filtered = [];
-                    var basePoints;
 
-                    if (selectedDay && selectedDay !== "All") {
-                        basePoints = pointsForDay(selectedDay);
-                    } else {
-                        basePoints = pointsData.slice();
-                    }
+                    var dayChanged = normalizedDay !== lastSelections.day;
+                    var normalizedReport = populateReportSelect(basePoints, !dayChanged);
 
-                    var dayChanged = selectedDay !== lastSelections.day;
-                    populateSelect(
-                        reportSelect,
-                        collectUnique(basePoints, "report"),
-                        !dayChanged,
-                        [{ value: "AMBOS", label: "Ambos" }]
-                    );
+                    var currentReportSelection = reportSelect.value || normalizedReport;
+                    var normalizedSelection = normalizeReportValue(currentReportSelection);
+                    var reportChanged = dayChanged || normalizedSelection !== lastSelections.report;
 
-                    var selectedReport = reportSelect.value || "All";
-                    var normalizedReport = selectedReport === "AMBOS" ? "All" : selectedReport;
-                    var reportChanged = dayChanged || normalizedReport !== lastSelections.report;
-
-                    var reportFiltered = filterByReport(basePoints, selectedReport);
+                    var reportFiltered = filterByReport(basePoints, normalizedSelection);
 
                     populateSelect(
                         operatorSelect,
@@ -837,6 +952,16 @@ class FilterPanel(MacroElement):
                         filtered.push(point);
                     }
 
+                    logStage("update", {
+                        day: normalizedDay,
+                        report: normalizedSelection,
+                        operator: opValue,
+                        network: netValue,
+                        baseCount: basePoints.length,
+                        reportCount: reportFiltered.length,
+                        finalCount: filtered.length
+                    });
+
                     filtered.sort(function(a, b) {
                         if (a.timestamp < b.timestamp) {
                             return -1;
@@ -851,8 +976,16 @@ class FilterPanel(MacroElement):
                     routeLayer.clearLayers();
 
                     if (filtered.length === 0) {
-                        lastSelections.day = selectedDay || "All";
-                        lastSelections.report = normalizedReport;
+                        if (typeof console !== "undefined" && console.warn) {
+                            console.warn("[FilterPanel] La combinación de filtros no devuelve puntos", {
+                                day: normalizedDay,
+                                report: normalizedSelection,
+                                operator: opValue,
+                                network: netValue
+                            });
+                        }
+                        lastSelections.day = normalizedDay;
+                        lastSelections.report = normalizedSelection;
                         lastSelections.operator = opValue;
                         lastSelections.network = netValue;
                         return;
@@ -894,8 +1027,8 @@ class FilterPanel(MacroElement):
                         L.polyline(latLngs, { color: routeColor, weight: 4, opacity: 0.6 }).addTo(routeLayer);
                     }
 
-                    lastSelections.day = selectedDay || "All";
-                    lastSelections.report = normalizedReport;
+                    lastSelections.day = normalizedDay;
+                    lastSelections.report = normalizedSelection;
                     lastSelections.operator = opValue;
                     lastSelections.network = netValue;
                 }
@@ -936,6 +1069,7 @@ def render_interactive_map(
             "lat": point.lat,
             "lon": point.lon,
             "day": point.send_time.date().isoformat(),
+            "day_key": point.send_time.strftime("%Y%m%d"),
             "report": point.report_kind,
             "operator": point.operator or "Desconocido",
             "network": point.network_label or "Desconocida",
