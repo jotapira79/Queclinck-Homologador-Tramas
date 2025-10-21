@@ -50,7 +50,20 @@ El siguiente ejemplo ilustra la correspondencia de tiempos:
 
 ## Filtros disponibles
 
-Todos los filtros aceptan la palabra clave `All` (sin distinguir mayúsculas) para mostrar
+El panel interactivo ahora incluye cuatro filtros jerárquicos:
+
+1. **Día** → determina el subconjunto principal de puntos.
+2. **Tipo de reporte (BUFFER/RESP/Ambos)** → opera sobre el día activo y permite
+   discriminar entre mensajes `+BUFF:` y `+RESP:`. La opción "Ambos" equivale a mostrar
+   todos los tipos disponibles.
+3. **Operador** → lista únicamente los operadores disponibles según el día y tipo de
+   reporte seleccionados.
+4. **Tecnología** → muestra las tecnologías válidas dentro de la combinación previa.
+
+La opción "Todos" permanece disponible en cada filtro para ampliar nuevamente el alcance
+de los datos mostrados.
+
+Todos los filtros de la CLI aceptan la palabra clave `All` (sin distinguir mayúsculas) para mostrar
 el conjunto completo de puntos.
 
 - `--day YYYY-MM-DD`: restringe la visualización a una fecha específica.
