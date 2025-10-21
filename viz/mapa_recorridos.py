@@ -1031,25 +1031,38 @@ def build_points(
     if not model_clean:
         raise ValueError("El modelo no puede estar vacío")
 
+    # Mantén el comportamiento actual: por defecto solo GTERI.
+    # (Si más adelante quieres soportar GTFRI por defecto, usa: ["gteri", "gtfri"])
     reports_to_use = [r.lower() for r in (reports or ["gteri"])]
+
     all_points: List[LocationPoint] = []
     searched_paths: List[Path] = []
     for report in reports_to_use:
         map_path = base_dir / f"{report}_{model_clean}_map.db"
+
+        # 1) Si ya existe la base enriquecida *_map.db, leerla directamente.
+        if map_path.exists():
+            searched_paths.append(map_path)
+            points = _load_locations_from_db(map_path, report, model_clean, imei)
+            all_points.extend(points)
+            continue
+
+        # 2) Si no existe, intenta generar/ubicar la ruta con ensure_enriched_database
         try:
-            ensure_enriched_database(
+            enriched_path = ensure_enriched_database(
                 report=report,
                 model=model_clean,
                 base_dir=base_dir,
                 imei=imei,
             )
+            searched_paths.append(enriched_path)
+            points = _load_locations_from_db(enriched_path, report, model_clean, imei)
+            all_points.extend(points)
         except FileNotFoundError:
+            # Registrar la ruta buscada para un mensaje de error claro más adelante.
             searched_paths.append(map_path)
-            continue
-
-        searched_paths.append(map_path)
-        points = _load_locations_from_db(map_path, report, model_clean, imei)
-        all_points.extend(points)
+            # Continuar con el siguiente reporte sin abortar.
+            pass
 
     if not all_points:
         existing_paths = list({path: None for path in searched_paths if path.exists()}.keys())

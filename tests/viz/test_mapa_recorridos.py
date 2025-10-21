@@ -340,3 +340,55 @@ def test_render_interactive_map_includes_filters(tmp_path: Path):
     assert 'value="RESP"' in html
     assert 'value="All"' in html
     assert 'Calidad de señal' in html
+
+
+def test_build_points_reads_existing_map_db(tmp_path: Path):
+    """
+    Si existe bases_sqlite/gteri_<modelo>_map.db con datos válidos,
+    build_points debe leerla directamente sin depender de ensure_enriched_database.
+    """
+
+    base_dir = tmp_path
+    model = "gv350ceu"
+    imei = "123456789012345"
+
+    db_path = base_dir / f"gteri_{model}_map.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        f"""
+        CREATE TABLE "gteri_{model}" (
+            imei TEXT,
+            send_time TEXT,
+            lat REAL,
+            lon REAL,
+            header TEXT,
+            operador TEXT,
+            tecnologia_celular TEXT,
+            calidad_senal TEXT
+        )
+        """
+    )
+    conn.executemany(
+        f'INSERT INTO "gteri_{model}" (imei, send_time, lat, lon, header, operador, tecnologia_celular, calidad_senal) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+            (imei, "20251016080000", -23.65, -70.4, "+RESP:GTERI", "Claro", "4G", "Excelente"),
+            (imei, "20251016083000", -23.66, -70.41, "+BUFF:GTERI", "Claro", "4G", "Buena"),
+            (imei, "20251017090000", -23.67, -70.42, "+RESP:GTERI", "Movistar", "3G", "Regular"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    points = build_points(
+        model=model,
+        imei=imei,
+        base_dir=base_dir,
+        reports=["gteri"],
+    )
+
+    assert len(points) == 3
+    kinds = {point.report_kind for point in points}
+    assert kinds == {"BUFFER", "RESP"}
+    assert {point.operator for point in points} == {"Claro", "Movistar"}
+    assert {point.network_label for point in points} == {"4G", "3G"}
