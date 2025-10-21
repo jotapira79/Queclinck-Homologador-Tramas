@@ -961,6 +961,55 @@ class FilterPanel(MacroElement):
             """
         )
 
+    def render(self, **kwargs):  # type: ignore[override]
+        """Renderiza el panel y reubica el bloque de scripts al final del body.
+
+        Folium/Branca inserta por defecto los scripts de los MacroElement en el
+        contenedor ``figure.script`` inmediatamente después de renderizar el
+        elemento.  Para garantizar que el script del panel se ejecute una vez
+        que ``figure_*`` y el mapa base ya han sido definidos, volvemos a
+        insertar el bloque asociado al panel al final del contenedor de
+        scripts.
+        """
+
+        parent_render = getattr(super(), "render", None)
+        if parent_render is None:
+            return
+
+        parent_render(**kwargs)
+
+        figure = getattr(self, "_parent", None)
+        if figure is None:
+            figure = self.get_root()
+
+        script_container = getattr(figure, "script", None)
+        if script_container is None:
+            return
+
+        children = getattr(script_container, "_children", None)
+        if not isinstance(children, dict) or not children:
+            return
+
+        name_getter = getattr(self, "get_name", None)
+        if name_getter is None:
+            return
+
+        script_key = None
+        panel_name = name_getter()
+        if panel_name in children:
+            script_key = panel_name
+        else:
+            for key in children:
+                if key.endswith(panel_name):
+                    script_key = key
+                    break
+
+        if script_key is None:
+            return
+
+        script_element = children.pop(script_key)
+        children[script_key] = script_element
+
 
 def render_interactive_map(
     points: List[LocationPoint],
