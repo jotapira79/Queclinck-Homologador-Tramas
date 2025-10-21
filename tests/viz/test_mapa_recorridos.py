@@ -51,7 +51,14 @@ def _make_point(offset_seconds: int, *, operator: str = "Entel", network: str = 
     )
 
 
-def _make_info(offset_seconds: int, *, label: str, csq: float, csq_ber: int | None = None) -> InfoRecord:
+def _make_info(
+    offset_seconds: int,
+    *,
+    label: str,
+    csq: float,
+    csq_ber: int | None = None,
+    operator: str = "Desconocido",
+) -> InfoRecord:
     base = datetime(2025, 10, 10, 0, 0, 0)
     return InfoRecord(
         imei="123456789012345",
@@ -60,6 +67,7 @@ def _make_info(offset_seconds: int, *, label: str, csq: float, csq_ber: int | No
         raw_network_value=None,
         csq=csq,
         csq_ber=csq_ber,
+        operator=operator,
     )
 
 
@@ -78,9 +86,9 @@ def _prepare_sample_databases(tmp_path: Path) -> Path:
         f'INSERT INTO "gteri_{model}" (imei, send_time, lat, lon, mcc, mnc) '
         'VALUES (?, ?, ?, ?, ?, ?)',
         [
-            (imei, "202510100000", -33.45, -70.66, "0730", "0002"),
-            (imei, "202510100020", -33.46, -70.65, "0730", "0002"),
-            (imei, "202510100120", -33.47, -70.64, "0730", "0002"),
+            (imei, "20251010000000", -33.45, -70.66, "0730", "0002"),
+            (imei, "20251010000040", -33.46, -70.65, "0730", "0002"),
+            (imei, "20251010010130", -33.47, -70.64, "0730", "0002"),
         ],
     )
     conn.commit()
@@ -97,7 +105,7 @@ def _prepare_sample_databases(tmp_path: Path) -> Path:
         'VALUES (?, ?, ?, ?, ?)',
         [
             (imei, "202510100000", 3, 160, None),
-            (imei, "202510100100", 1, 12, None),
+            (imei, "202510100120", 1, 12, None),
         ],
     )
     conn.commit()
@@ -126,18 +134,18 @@ def test_associate_info_uses_latest_previous_record():
 
     _associate_info(points, infos)
 
-    assert [point.network_label for point in points] == ["3G", "3G", "3G", "4G"]
+    assert [point.network_label for point in points] == ["3G", "3G", "4G", "4G"]
     assert [point.signal_quality for point in points] == [
         "Buena",
         "Buena",
-        "Buena",
+        "Excelente",
         "Excelente",
     ]
 
 
-def test_associate_info_leaves_points_without_prior_info():
-    points = [_make_point(-30), _make_point(10)]
-    infos = [_make_info(20, label="2G", csq=25)]
+def test_associate_info_ignores_info_farther_than_one_minute():
+    points = [_make_point(0), _make_point(10)]
+    infos = [_make_info(200, label="2G", csq=25)]
 
     _associate_info(points, infos)
 
@@ -145,6 +153,15 @@ def test_associate_info_leaves_points_without_prior_info():
     assert points[0].signal_quality == "Desconocida"
     assert points[1].network_label == "Desconocida"
     assert points[1].signal_quality == "Desconocida"
+
+
+def test_associate_info_updates_operator_when_available():
+    points = [_make_point(0, operator="Desconocido")]
+    infos = [_make_info(0, label="3G", csq=15, operator="Claro")]
+
+    _associate_info(points, infos)
+
+    assert points[0].operator == "Claro"
 
 
 def test_filter_points_accepts_all_keyword_for_every_filter():
@@ -307,7 +324,7 @@ def test_build_points_accepts_whitespace_imei(tmp_path: Path):
     conn.execute(
         f'INSERT INTO "gtinf_{model}" (imei, send_time, network_type, csq, csq_ber) '
         'VALUES (?, ?, ?, ?, ?)',
-        (f"\t{imei}   ", "202401020200", 3, 160, None),
+        (f"\t{imei}   ", "202401020304", 3, 160, None),
     )
     conn.commit()
     conn.close()
@@ -474,7 +491,7 @@ def test_build_points_uses_existing_map_databases(tmp_path: Path):
         [
             (
                 imei,
-                "202510100000",
+                "20251010000000",
                 -33.45,
                 -70.66,
                 "0730",
@@ -487,7 +504,7 @@ def test_build_points_uses_existing_map_databases(tmp_path: Path):
             ),
             (
                 imei,
-                "202510100100",
+                "20251010010130",
                 -33.46,
                 -70.65,
                 "0730",
@@ -520,8 +537,8 @@ def test_build_points_uses_existing_map_databases(tmp_path: Path):
         f'INSERT INTO "gtinf_{model}" (imei, send_time, network_type, csq, csq_ber) '
         'VALUES (?, ?, ?, ?, ?)',
         [
-            (imei, "20251009235950", 3, 160, None),
-            (imei, "202510100055", 2, 90, None),
+            (imei, "20251010000000", 3, 160, None),
+            (imei, "20251010010130", 2, 90, None),
         ],
     )
     conn.commit()
@@ -564,3 +581,8 @@ def test_render_interactive_map_includes_all_filters(tmp_path: Path):
     assert 'id="FilterPanel_operator" style=' in html
     operator_fragment = html.split('id="FilterPanel_operator"', 1)[1].split('>', 1)[0]
     assert "disabled" not in operator_fragment
+    report_fragment = html.split('id="FilterPanel_report"', 1)[1].split('</select>', 1)[0]
+    assert 'value="AMBOS"' in report_fragment
+    assert 'value="BUFFER"' in report_fragment
+    assert 'value="RESP"' in report_fragment
+    assert 'value="All"' not in report_fragment

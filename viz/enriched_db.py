@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+from bisect import bisect_left
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from src.ingestors.sqlite_records import ensure_db
 
@@ -18,6 +20,7 @@ from .utils import (
     MNC_CANDIDATES,
     NETWORK_TYPE_CANDIDATES,
     NETWORK_TYPE_MAP,
+    OPERATOR_CANDIDATES,
     TIME_CANDIDATES,
     classify_signal,
     detect_table,
@@ -30,6 +33,46 @@ from .utils import (
 )
 
 
+_MAX_TIME_DIFF_SECONDS = 60
+
+
+@dataclass(frozen=True)
+class _GTINFEntry:
+    send_time: datetime
+    network_label: str
+    signal_quality: str
+    signal_dbm: Optional[float]
+    operator: str
+
+
+def _best_entry(
+    entries: Sequence[_GTINFEntry],
+    times: Sequence[datetime],
+    target: datetime,
+) -> Optional[_GTINFEntry]:
+    if not entries:
+        return None
+    index = bisect_left(times, target)
+    candidates: List[_GTINFEntry] = []
+    if 0 <= index < len(entries):
+        candidates.append(entries[index])
+    if index > 0:
+        candidates.append(entries[index - 1])
+    best: Optional[_GTINFEntry] = None
+    best_delta: float = float("inf")
+    for candidate in candidates:
+        delta = abs((candidate.send_time - target).total_seconds())
+        if delta > _MAX_TIME_DIFF_SECONDS:
+            continue
+        if best is None or delta < best_delta:
+            best = candidate
+            best_delta = delta
+        elif delta == best_delta:
+            if best.send_time > target >= candidate.send_time:
+                best = candidate
+    return best
+
+
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
     info = conn.execute(f'PRAGMA table_info("{table}")').fetchall()
     existing = {row[1] for row in info}
@@ -39,7 +82,7 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition
 
 def _load_gtinf_lookup(
     gtinf_path: Path, model: str, imei: str | None = None
-) -> Dict[str, List[Tuple[datetime, str, str, Optional[float]]]]:
+) -> Dict[str, List[_GTINFEntry]]:
     if not gtinf_path.exists():
         return {}
 
@@ -56,20 +99,30 @@ def _load_gtinf_lookup(
 
         csq_col = first_existing(CSQ_CANDIDATES, columns)
         ber_col = first_existing(CSQ_BER_CANDIDATES, columns)
+        operator_col = first_existing(OPERATOR_CANDIDATES, columns)
+        mcc_col = first_existing(MCC_CANDIDATES, columns)
+        mnc_col = first_existing(MNC_CANDIDATES, columns)
 
         query_cols = {imei_col, time_col, network_col}
         if csq_col:
             query_cols.add(csq_col)
         if ber_col:
             query_cols.add(ber_col)
+        if operator_col:
+            query_cols.add(operator_col)
+        if mcc_col:
+            query_cols.add(mcc_col)
+        if mnc_col:
+            query_cols.add(mnc_col)
+
         select_clause = ", ".join(f'"{col}"' for col in query_cols)
         sql = f'SELECT {select_clause} FROM "{table}" ORDER BY "{time_col}"'
 
-        lookup: Dict[str, List[Tuple[datetime, str, str, Optional[float]]]] = defaultdict(list)
+        lookup: Dict[str, List[_GTINFEntry]] = defaultdict(list)
         for row in conn.execute(sql):
             imei_raw = row[imei_col]
-            imei = str(imei_raw).strip() if imei_raw not in (None, "") else None
-            if not imei:
+            imei_value = str(imei_raw).strip() if imei_raw not in (None, "") else None
+            if not imei_value:
                 continue
             send_dt = parse_datetime(row[time_col])
             if send_dt is None:
@@ -79,8 +132,26 @@ def _load_gtinf_lookup(
             csq = safe_float(row[csq_col]) if csq_col else None
             csq_ber = safe_int(row[ber_col]) if ber_col else None
             quality, dbm = classify_signal(network_label, csq, csq_ber)
-            lookup[imei].append((send_dt, network_label, quality, dbm))
-        return {key: sorted(values, key=lambda item: item[0]) for key, values in lookup.items()}
+            operator_value = "Desconocido"
+            if operator_col:
+                raw_operator = row[operator_col]
+                if raw_operator not in (None, ""):
+                    operator_value = str(raw_operator).strip() or "Desconocido"
+            if operator_value in ("", "Desconocido"):
+                mcc_value = safe_int(row[mcc_col]) if mcc_col else None
+                mnc_value = safe_int(row[mnc_col]) if mnc_col else None
+                normalized = normalize_operator(mcc_value, mnc_value)
+                if normalized != "Desconocido" or operator_value == "":
+                    operator_value = normalized
+            entry = _GTINFEntry(
+                send_time=send_dt,
+                network_label=network_label,
+                signal_quality=quality,
+                signal_dbm=dbm,
+                operator=operator_value or "Desconocido",
+            )
+            lookup[imei_value].append(entry)
+        return {key: sorted(values, key=lambda item: item.send_time) for key, values in lookup.items()}
     finally:
         conn.close()
 
@@ -157,15 +228,17 @@ def ensure_enriched_database(
         conn.execute(f'UPDATE "{table}" SET "operador" = "Desconocido"')
 
         gtinf_lookup = _load_gtinf_lookup(gtinf_path, model_clean, imei)
-        if not gtinf_lookup:
-            conn.commit()
-        else:
+        if gtinf_lookup:
             select_sql = (
                 f'SELECT ROWID as __rowid__, "{imei_col}" as imei_value, '
                 f'"{time_col}" as send_value FROM "{table}" ORDER BY "{time_col}"'
             )
+            time_lookup: Dict[str, List[datetime]] = {
+                key: [entry.send_time for entry in entries]
+                for key, entries in gtinf_lookup.items()
+            }
             updates: List[Tuple[str, str, Optional[float], int]] = []
-            positions: Dict[str, int] = defaultdict(int)
+            operator_updates: List[Tuple[str, int]] = []
 
             for row in conn.execute(select_sql):
                 imei_val = row["imei_value"]
@@ -175,26 +248,35 @@ def ensure_enriched_database(
                 send_dt = parse_datetime(row["send_value"])
                 if send_dt is None:
                     continue
-                infos = gtinf_lookup.get(imei_value)
-                if not infos:
+                entries = gtinf_lookup.get(imei_value)
+                times = time_lookup.get(imei_value)
+                if not entries or not times:
                     continue
-                idx = positions.get(imei_value, 0)
-                while idx < len(infos) and infos[idx][0] <= send_dt:
-                    idx += 1
-                positions[imei_value] = idx
-                if idx == 0:
+                chosen = _best_entry(entries, times, send_dt)
+                if chosen is None:
                     continue
-                latest = infos[idx - 1]
-                network_label = latest[1]
-                signal_quality = latest[2]
-                signal_dbm = latest[3]
-                updates.append((network_label, signal_quality, signal_dbm, row["__rowid__"]))
+                updates.append(
+                    (
+                        chosen.network_label,
+                        chosen.signal_quality,
+                        chosen.signal_dbm,
+                        row["__rowid__"],
+                    )
+                )
+                if chosen.operator and chosen.operator not in {"", "Desconocido"}:
+                    operator_updates.append((chosen.operator, row["__rowid__"]))
 
             if updates:
                 conn.executemany(
                     f'UPDATE "{table}" SET "tecnologia_celular" = ?, '
                     f'"calidad_senal" = ?, "nivel_senal_dbm" = ? WHERE ROWID = ?',
                     updates,
+                )
+            if operator_updates:
+                conn.executemany(
+                    f'UPDATE "{table}" SET "operador" = ? '
+                    "WHERE ROWID = ? AND (\"operador\" IS NULL OR TRIM(\"operador\") = '' OR \"operador\" = 'Desconocido')",
+                    operator_updates,
                 )
 
         columns = load_table_schema(conn, table)
@@ -206,16 +288,19 @@ def ensure_enriched_database(
                 f'"{mcc_col}" as mcc_value, "{mnc_col}" as mnc_value '
                 f'FROM "{table}"'
             )
-            operator_updates: List[Tuple[str, int]] = []
+            fallback_updates: List[Tuple[str, int]] = []
             for row in conn.execute(select_sql):
                 mcc = safe_int(row["mcc_value"]) if mcc_col else None
                 mnc = safe_int(row["mnc_value"])
                 operator = normalize_operator(mcc, mnc)
-                operator_updates.append((operator, row["__rowid__"]))
-            if operator_updates:
+                if operator in ("", "Desconocido"):
+                    continue
+                fallback_updates.append((operator, row["__rowid__"]))
+            if fallback_updates:
                 conn.executemany(
-                    f'UPDATE "{table}" SET "operador" = ? WHERE ROWID = ?',
-                    operator_updates,
+                    f'UPDATE "{table}" SET "operador" = ? '
+                    "WHERE ROWID = ? AND (\"operador\" IS NULL OR TRIM(\"operador\") = '' OR \"operador\" = 'Desconocido')",
+                    fallback_updates,
                 )
         conn.commit()
     finally:

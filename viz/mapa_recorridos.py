@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -52,6 +53,7 @@ from .utils import (
     MNC_CANDIDATES,
     NETWORK_TYPE_CANDIDATES,
     NETWORK_TYPE_MAP,
+    OPERATOR_CANDIDATES,
     TIME_CANDIDATES,
     classify_signal as _classify_signal,
     detect_table as _detect_table,
@@ -93,6 +95,7 @@ class InfoRecord:
     raw_network_value: Optional[int]
     csq: Optional[float] = None
     csq_ber: Optional[int] = None
+    operator: str = "Desconocido"
 
 NETWORK_COLORS = {
     "2G": "#1f77b4",
@@ -109,6 +112,8 @@ OPERATOR_COLORS = {
     "WOM": "#9467bd",
     "Desconocido": "#7f7f7f",
 }
+
+_ASSOCIATION_MAX_DELTA_SECONDS = 60
 
 # Tipos de reporte -----------------------------------------------------------
 
@@ -394,12 +399,21 @@ def _load_gtinf_records(db_path: Path, model: str, imei: str) -> List[InfoRecord
 
     csq_col = _first_existing(CSQ_CANDIDATES, columns)
     ber_col = _first_existing(CSQ_BER_CANDIDATES, columns)
+    operator_col = _first_existing(OPERATOR_CANDIDATES, columns)
+    mcc_col = _first_existing(MCC_CANDIDATES, columns)
+    mnc_col = _first_existing(MNC_CANDIDATES, columns)
 
     query_cols = {imei_col, time_col, network_col}
     if csq_col:
         query_cols.add(csq_col)
     if ber_col:
         query_cols.add(ber_col)
+    if operator_col:
+        query_cols.add(operator_col)
+    if mcc_col:
+        query_cols.add(mcc_col)
+    if mnc_col:
+        query_cols.add(mnc_col)
 
     imei_expr = _normalized_imei_expression(imei_col)
     select_clause = ", ".join(f'"{col}"' for col in query_cols)
@@ -418,6 +432,17 @@ def _load_gtinf_records(db_path: Path, model: str, imei: str) -> List[InfoRecord
         network_label = NETWORK_TYPE_MAP.get(raw_network, "Desconocida")
         csq = _safe_float(row[csq_col]) if csq_col else None
         csq_ber = _safe_int(row[ber_col]) if ber_col else None
+        operator_value = "Desconocido"
+        if operator_col:
+            raw_operator = row[operator_col]
+            if raw_operator not in (None, ""):
+                operator_value = str(raw_operator).strip() or "Desconocido"
+        if operator_value in ("", "Desconocido"):
+            mcc_value = _safe_int(row[mcc_col]) if mcc_col else None
+            mnc_value = _safe_int(row[mnc_col]) if mnc_col else None
+            normalized = _normalize_operator(mcc_value, mnc_value)
+            if normalized != "Desconocido" or operator_value == "":
+                operator_value = normalized
         info_records.append(
             InfoRecord(
                 imei=imei,
@@ -426,6 +451,7 @@ def _load_gtinf_records(db_path: Path, model: str, imei: str) -> List[InfoRecord
                 raw_network_value=raw_network,
                 csq=csq,
                 csq_ber=csq_ber,
+                operator=operator_value or "Desconocido",
             )
         )
     conn.close()
@@ -439,25 +465,41 @@ def _associate_info(points: List[LocationPoint], infos: List[InfoRecord]) -> Non
     if not points or not infos:
         return
     infos_sorted = sorted(infos, key=lambda r: r.send_time)
-    idx = 0
-    current_info: Optional[InfoRecord] = None
+    info_times = [record.send_time for record in infos_sorted]
     for point in sorted(points, key=lambda p: p.send_time):
-        while idx < len(infos_sorted) and infos_sorted[idx].send_time <= point.send_time:
-            current_info = infos_sorted[idx]
-            idx += 1
-        if current_info is None:
-            continue
-        if point.network_label not in (None, "", "Desconocida"):
-            if point.signal_quality not in (None, "", "Desconocida") and point.signal_dbm is not None:
+        index = bisect_left(info_times, point.send_time)
+        candidates: List[InfoRecord] = []
+        if 0 <= index < len(infos_sorted):
+            candidates.append(infos_sorted[index])
+        if index > 0:
+            candidates.append(infos_sorted[index - 1])
+
+        chosen: Optional[InfoRecord] = None
+        best_delta = float("inf")
+        for candidate in candidates:
+            delta = abs((candidate.send_time - point.send_time).total_seconds())
+            if delta > _ASSOCIATION_MAX_DELTA_SECONDS:
                 continue
-        point.network_label = current_info.network_label
-        point.csq = current_info.csq
-        point.csq_ber = current_info.csq_ber
+            if chosen is None or delta < best_delta:
+                chosen = candidate
+                best_delta = delta
+            elif delta == best_delta:
+                if chosen.send_time > point.send_time >= candidate.send_time:
+                    chosen = candidate
+
+        if chosen is None:
+            continue
+
+        point.network_label = chosen.network_label
+        point.csq = chosen.csq
+        point.csq_ber = chosen.csq_ber
         quality, dbm = _classify_signal(
-            current_info.network_label, current_info.csq, current_info.csq_ber
+            chosen.network_label, chosen.csq, chosen.csq_ber
         )
         point.signal_quality = quality
         point.signal_dbm = dbm
+        if chosen.operator and chosen.operator not in {"", "Desconocido"}:
+            point.operator = chosen.operator
 
 
 # Filtros --------------------------------------------------------------------
@@ -630,11 +672,9 @@ class FilterPanel(MacroElement):
                     </select>
                     <label for="{{ this.get_name() }}_report" style="display:block; font-weight:bold; margin-bottom:4px;">Tipo de reporte</label>
                     <select id="{{ this.get_name() }}_report" style="width:100%; margin-bottom:10px; padding:4px;">
-                        <option value="All" selected>Todos</option>
-                        <option value="AMBOS">Ambos</option>
-                        {% for report in this.report_options %}
-                        <option value="{{ report }}">{{ report }}</option>
-                        {% endfor %}
+                        <option value="AMBOS" selected>AMBOS</option>
+                        <option value="BUFFER">BUFFER</option>
+                        <option value="RESP">RESP</option>
                     </select>
                     <label for="{{ this.get_name() }}_operator" style="display:block; font-weight:bold; margin-bottom:4px;">Operador</label>
                     <select id="{{ this.get_name() }}_operator" style="width:100%; margin-bottom:10px; padding:4px;">
@@ -757,6 +797,32 @@ class FilterPanel(MacroElement):
                     }
                 }
 
+                function populateReportSelect(points, preserveSelection) {
+                    var availableValues = collectUnique(points, "report");
+                    var availableSet = {};
+                    for (var idx = 0; idx < availableValues.length; idx += 1) {
+                        availableSet[availableValues[idx]] = true;
+                    }
+                    var previousValue = preserveSelection ? reportSelect.value : "AMBOS";
+                    if (previousValue !== "BUFFER" && previousValue !== "RESP") {
+                        previousValue = "AMBOS";
+                    } else if (!availableSet[previousValue]) {
+                        previousValue = "AMBOS";
+                    }
+                    var order = ["AMBOS", "BUFFER", "RESP"];
+                    reportSelect.innerHTML = "";
+                    for (var i = 0; i < order.length; i += 1) {
+                        var option = document.createElement("option");
+                        option.value = order[i];
+                        option.textContent = order[i];
+                        if (order[i] !== "AMBOS" && !availableSet[order[i]]) {
+                            option.disabled = true;
+                        }
+                        reportSelect.appendChild(option);
+                    }
+                    reportSelect.value = previousValue;
+                }
+
                 function pointsForDay(dayValue) {
                     var dayPoints = [];
                     for (var i = 0; i < pointsData.length; i += 1) {
@@ -772,7 +838,7 @@ class FilterPanel(MacroElement):
                     if (!points.length) {
                         return [];
                     }
-                    if (!reportValue || reportValue === "All" || reportValue === "AMBOS") {
+                    if (!reportValue || reportValue === "AMBOS" || reportValue === "All") {
                         return points.slice();
                     }
                     var filtered = [];
@@ -796,16 +862,10 @@ class FilterPanel(MacroElement):
                     }
 
                     var dayChanged = selectedDay !== lastSelections.day;
-                    populateSelect(
-                        reportSelect,
-                        collectUnique(basePoints, "report"),
-                        !dayChanged,
-                        [{ value: "AMBOS", label: "Ambos" }]
-                    );
+                    populateReportSelect(basePoints, !dayChanged);
 
-                    var selectedReport = reportSelect.value || "All";
-                    var normalizedReport = selectedReport === "AMBOS" ? "All" : selectedReport;
-                    var reportChanged = dayChanged || normalizedReport !== lastSelections.report;
+                    var selectedReport = reportSelect.value || "AMBOS";
+                    var reportChanged = dayChanged || selectedReport !== lastSelections.report;
 
                     var reportFiltered = filterByReport(basePoints, selectedReport);
 
@@ -852,7 +912,7 @@ class FilterPanel(MacroElement):
 
                     if (filtered.length === 0) {
                         lastSelections.day = selectedDay || "All";
-                        lastSelections.report = normalizedReport;
+                        lastSelections.report = selectedReport;
                         lastSelections.operator = opValue;
                         lastSelections.network = netValue;
                         return;
@@ -895,7 +955,7 @@ class FilterPanel(MacroElement):
                     }
 
                     lastSelections.day = selectedDay || "All";
-                    lastSelections.report = normalizedReport;
+                    lastSelections.report = selectedReport;
                     lastSelections.operator = opValue;
                     lastSelections.network = netValue;
                 }
