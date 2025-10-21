@@ -42,6 +42,13 @@ LON_CANDIDATES = [
 TIME_CANDIDATES = ["send_time", "gnss_utc_time", "timestamp", "created_at"]
 MCC_CANDIDATES = ["mcc", "mobile_country_code"]
 MNC_CANDIDATES = ["mnc", "mobile_network_code"]
+OPERATOR_CANDIDATES = [
+    "operador",
+    "operator",
+    "carrier",
+    "operador_celular",
+    "network_operator",
+]
 CSQ_CANDIDATES = ["csq", "csq_rssi", "csq_rsrp", "lte_csq"]
 CSQ_BER_CANDIDATES = ["csq_ber", "ber"]
 NETWORK_TYPE_CANDIDATES = ["network_type", "rat", "network"]
@@ -248,6 +255,7 @@ __all__ = [
     "TIME_CANDIDATES",
     "MCC_CANDIDATES",
     "MNC_CANDIDATES",
+    "OPERATOR_CANDIDATES",
     "CSQ_CANDIDATES",
     "CSQ_BER_CANDIDATES",
     "NETWORK_TYPE_CANDIDATES",
