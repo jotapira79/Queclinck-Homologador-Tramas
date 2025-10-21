@@ -14,24 +14,27 @@ NETWORK_TYPE_MAP = {
 
 IMEI_CANDIDATES = ["imei", "unique_id", "uniqueid", "device_imei"]
 LAT_CANDIDATES = [
+    # Formatos genéricos
     "lat",
     "latitude",
+    # Variantes en grados usadas por bases históricas (p.ej. ``latitude_deg``)
     "latitude_deg",
-    "lat_decimal",
     "lat_deg",
-    "latitude_decimal",
     "latitude_degrees",
     "lat_degrees",
+    # Variantes con sufijo ``_decimal`` que hemos encontrado en bases nuevas
+    "lat_decimal",
+    "latitude_decimal",
 ]
 LON_CANDIDATES = [
     "lon",
     "longitude",
     "longitude_deg",
-    "lon_decimal",
     "lon_deg",
-    "longitude_decimal",
     "longitude_degrees",
     "lon_degrees",
+    "lon_decimal",
+    "longitude_decimal",
     "lng",
     "lng_decimal",
     "lng_deg",
