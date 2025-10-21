@@ -10,6 +10,7 @@ from viz.mapa_recorridos import (
     InfoRecord,
     LocationPoint,
     _associate_info,
+    _detect_report_kind,
     _filter_points,
     _normalize_operator,
     _safe_int,
@@ -105,6 +106,12 @@ def _prepare_sample_databases(tmp_path: Path) -> Path:
     return base_dir
 
 
+def test_detect_report_kind_identifies_buffer_and_resp():
+    assert _detect_report_kind({"payload": "+BUFF:GTERI,..."}) == "BUFFER"
+    assert _detect_report_kind({"header": "+RESP:GTFRI"}) == "RESP"
+    assert _detect_report_kind({}) == "RESP"
+
+
 def test_associate_info_uses_latest_previous_record():
     points = [
         _make_point(0),
@@ -149,6 +156,8 @@ def test_filter_points_accepts_all_keyword_for_every_filter():
 
     assert _filter_points(points, operators=["All"]) == points
     assert _filter_points(points, networks=["ALL"]) == points
+    assert _filter_points(points, report_types=["All"]) == points
+    assert _filter_points(points, report_types=["AMBOS"]) == points
     assert _filter_points(points, day="all") == points
 
 
@@ -169,14 +178,27 @@ def test_filter_points_day_filter_has_priority():
     assert result == [day_one_point]
 
 
+def test_filter_points_respects_report_types():
+    buffer_point = _make_point(0, operator="Claro", network="3G")
+    buffer_point.report_kind = "BUFFER"
+    resp_point = _make_point(60, operator="Entel", network="4G")
+    resp_point.report_kind = "RESP"
+
+    points = [buffer_point, resp_point]
+
+    assert _filter_points(points, report_types=["BUFFER"]) == [buffer_point]
+    assert _filter_points(points, report_types=["RESP"]) == [resp_point]
+    assert _filter_points(points, day="2025-10-10", report_types=["BUFFER"], operators=["Claro"]) == [buffer_point]
+
+
 def test_filter_points_operator_and_network_depend_on_day():
     points = [
         _make_point(0, operator="Claro", network="3G"),
         _make_point(86400, operator="Entel", network="4G"),
     ]
 
-    assert _filter_points(points, operators=["Claro"]) == points
-    assert _filter_points(points, networks=["3G"]) == points
+    assert _filter_points(points, operators=["Claro"]) == [points[0]]
+    assert _filter_points(points, networks=["3G"]) == [points[0]]
 
 
 def test_filter_points_returns_empty_when_combination_not_found():

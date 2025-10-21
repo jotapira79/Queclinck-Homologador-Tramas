@@ -74,6 +74,7 @@ class LocationPoint:
     imei: str
     source: str
     operator: str
+    report_kind: str = "RESP"
     mcc: Optional[int] = None
     mnc: Optional[int] = None
     raw_payload: Optional[dict] = None
@@ -108,6 +109,74 @@ OPERATOR_COLORS = {
     "WOM": "#9467bd",
     "Desconocido": "#7f7f7f",
 }
+
+# Tipos de reporte -----------------------------------------------------------
+
+
+REPORT_HEADER_CANDIDATES = [
+    "header",
+    "message_header",
+    "msg_header",
+    "message_type",
+    "report_header",
+]
+
+REPORT_PAYLOAD_CANDIDATES = [
+    "payload",
+    "raw_payload",
+    "raw_message",
+    "message",
+    "full_message",
+    "raw",
+]
+
+
+def _normalize_text(value: object) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8", errors="ignore")
+        except Exception:  # pragma: no cover - fallback de decodificación
+            return value.decode("latin-1", errors="ignore")
+    return str(value)
+
+
+def _detect_report_kind(raw_payload: Optional[dict]) -> str:
+    """Intenta clasificar el mensaje como BUFFER o RESP."""
+
+    if not raw_payload:
+        return "RESP"
+
+    def _match(text: str) -> Optional[str]:
+        if not text:
+            return None
+        upper_text = text.upper()
+        if "+BUFF:" in upper_text:
+            return "BUFFER"
+        if "+RESP:" in upper_text:
+            return "RESP"
+        return None
+
+    for key in REPORT_HEADER_CANDIDATES:
+        if key in raw_payload:
+            kind = _match(_normalize_text(raw_payload.get(key)))
+            if kind:
+                return kind
+
+    for key in REPORT_PAYLOAD_CANDIDATES:
+        if key in raw_payload:
+            kind = _match(_normalize_text(raw_payload.get(key)))
+            if kind:
+                return kind
+
+    for value in raw_payload.values():
+        kind = _match(_normalize_text(value))
+        if kind:
+            return kind
+
+    return "RESP"
+
 
 # Utilidades internas --------------------------------------------------------
 
@@ -290,6 +359,7 @@ def _load_locations_from_db(
                     send_time=dt,
                     imei=imei,
                     source=report.lower(),
+                    report_kind=_detect_report_kind(raw_payload),
                     operator=operator,
                     mcc=mcc,
                     mnc=mnc,
@@ -396,10 +466,11 @@ def _associate_info(points: List[LocationPoint], infos: List[InfoRecord]) -> Non
 def _filter_points(
     points: List[LocationPoint],
     day: Optional[str] = None,
+    report_types: Optional[Sequence[str]] = None,
     operators: Optional[Sequence[str]] = None,
     networks: Optional[Sequence[str]] = None,
 ) -> List[LocationPoint]:
-    """Filtra puntos aplicando prioridad al día antes que otros filtros."""
+    """Filtra puntos aplicando prioridad Día → Tipo → Operador/Tecnología."""
 
     normalized_ops = (
         {op.strip().lower() for op in operators if op is not None}
@@ -409,6 +480,11 @@ def _filter_points(
     normalized_networks = (
         {nt.strip().lower() for nt in networks if nt is not None}
         if networks
+        else None
+    )
+    normalized_reports = (
+        {rp.strip().lower() for rp in report_types if rp is not None}
+        if report_types
         else None
     )
 
@@ -421,27 +497,29 @@ def _filter_points(
             except ValueError as exc:  # pragma: no cover - validación de CLI
                 raise ValueError("El día debe tener formato YYYY-MM-DD") from exc
 
-    # Priorizamos la selección por día. Si no se especifica un día, se mantienen todos
-    # los puntos disponibles y los filtros complementarios quedan deshabilitados.
     if day_value is None:
-        day_filtered = list(points)
-        operator_set = None
-        network_set = None
+        base_points = list(points)
     else:
-        day_filtered = [
+        base_points = [
             point for point in points if point.send_time.date() == day_value.date()
         ]
-        operator_set = (
-            None if not normalized_ops or "all" in normalized_ops else normalized_ops
-        )
-        network_set = (
-            None
-            if not normalized_networks or "all" in normalized_networks
-            else normalized_networks
-        )
+
+    if normalized_reports and "all" not in normalized_reports and "ambos" not in normalized_reports:
+        base_points = [
+            point
+            for point in base_points
+            if (point.report_kind or "").lower() in normalized_reports
+        ]
+
+    operator_set = (
+        None if not normalized_ops or "all" in normalized_ops else normalized_ops
+    )
+    network_set = (
+        None if not normalized_networks or "all" in normalized_networks else normalized_networks
+    )
 
     result: List[LocationPoint] = []
-    for point in day_filtered:
+    for point in base_points:
         if operator_set and (point.operator or "").lower() not in operator_set:
             continue
         if network_set and (point.network_label or "").lower() not in network_set:
@@ -462,6 +540,7 @@ def _point_to_tooltip(point: LocationPoint) -> str:
     parts = [
         f"IMEI: {point.imei}",
         f"Reporte: {point.source.upper()}",
+        f"Tipo de reporte: {point.report_kind}",
         f"Fecha envío: {point.send_time.strftime('%Y-%m-%d %H:%M:%S')}",
         f"Coordenadas: {point.lat:.5f}, {point.lon:.5f}",
         f"Operador: {point.operator}",
@@ -508,13 +587,14 @@ class OperatorLegend(MacroElement):
 
 
 class FilterPanel(MacroElement):
-    """Panel de filtros jerárquicos Día → Operador/Tecnología."""
+    """Panel de filtros jerárquicos Día → Tipo → Operador/Tecnología."""
 
     def __init__(
         self,
         *,
         points_data: List[dict],
         day_options: List[str],
+        report_options: List[str],
         operator_options: List[str],
         network_options: List[str],
         operator_colors: Dict[str, str],
@@ -529,6 +609,7 @@ class FilterPanel(MacroElement):
         self.points_json = json.dumps(points_data, ensure_ascii=False)
         self.operator_colors_json = json.dumps(operator_colors, ensure_ascii=False)
         self.day_options = day_options
+        self.report_options = report_options
         self.operator_options = operator_options
         self.network_options = network_options
         self.initial_day = initial_day
@@ -545,6 +626,14 @@ class FilterPanel(MacroElement):
                         <option value="All">Todos</option>
                         {% for day in this.day_options %}
                         <option value="{{ day }}" {% if day == this.initial_day %}selected{% endif %}>{{ day }}</option>
+                        {% endfor %}
+                    </select>
+                    <label for="{{ this.get_name() }}_report" style="display:block; font-weight:bold; margin-bottom:4px;">Tipo de reporte</label>
+                    <select id="{{ this.get_name() }}_report" style="width:100%; margin-bottom:10px; padding:4px;">
+                        <option value="All" selected>Todos</option>
+                        <option value="AMBOS">Ambos</option>
+                        {% for report in this.report_options %}
+                        <option value="{{ report }}">{{ report }}</option>
                         {% endfor %}
                     </select>
                     <label for="{{ this.get_name() }}_operator" style="display:block; font-weight:bold; margin-bottom:4px;">Operador</label>
@@ -572,11 +661,17 @@ class FilterPanel(MacroElement):
                 var operatorColors = {{ this.operator_colors_json | safe }};
                 var panelId = "{{ this.get_name() }}";
                 var daySelect = document.getElementById(panelId + "_day");
+                var reportSelect = document.getElementById(panelId + "_report");
                 var operatorSelect = document.getElementById(panelId + "_operator");
                 var networkSelect = document.getElementById(panelId + "_network");
                 var markersLayer = L.layerGroup().addTo(mapObj);
                 var routeLayer = L.layerGroup().addTo(mapObj);
-                var lastSelectedDay = null;
+                var lastSelections = {
+                    day: null,
+                    report: null,
+                    operator: null,
+                    network: null
+                };
 
                 function colorForOperator(operator) {
                     if (operatorColors.hasOwnProperty(operator)) {
@@ -626,20 +721,36 @@ class FilterPanel(MacroElement):
                     return values;
                 }
 
-                function populateSelect(selectElement, values, preserveSelection) {
+                function populateSelect(selectElement, values, preserveSelection, extraOptions) {
                     var previousValue = preserveSelection ? selectElement.value : "All";
                     selectElement.innerHTML = "";
                     var allOption = document.createElement("option");
                     allOption.value = "All";
                     allOption.textContent = "Todos";
                     selectElement.appendChild(allOption);
+                    if (extraOptions && extraOptions.length) {
+                        for (var eo = 0; eo < extraOptions.length; eo += 1) {
+                            var extra = extraOptions[eo];
+                            var extraOption = document.createElement("option");
+                            extraOption.value = extra.value;
+                            extraOption.textContent = extra.label;
+                            selectElement.appendChild(extraOption);
+                        }
+                    }
                     for (var i = 0; i < values.length; i += 1) {
                         var option = document.createElement("option");
                         option.value = values[i];
                         option.textContent = values[i];
                         selectElement.appendChild(option);
                     }
-                    if (preserveSelection && values.indexOf(previousValue) !== -1) {
+                    var normalizedPrevious = previousValue === "AMBOS" ? "All" : previousValue;
+                    if (
+                        preserveSelection &&
+                        (
+                            previousValue === "AMBOS" ||
+                            values.indexOf(normalizedPrevious) !== -1
+                        )
+                    ) {
                         selectElement.value = previousValue;
                     } else {
                         selectElement.value = "All";
@@ -657,35 +768,69 @@ class FilterPanel(MacroElement):
                     return dayPoints;
                 }
 
+                function filterByReport(points, reportValue) {
+                    if (!points.length) {
+                        return [];
+                    }
+                    if (!reportValue || reportValue === "All" || reportValue === "AMBOS") {
+                        return points.slice();
+                    }
+                    var filtered = [];
+                    for (var i = 0; i < points.length; i += 1) {
+                        if (points[i].report === reportValue) {
+                            filtered.push(points[i]);
+                        }
+                    }
+                    return filtered;
+                }
+
                 function updateFilters() {
                     var selectedDay = daySelect.value;
-                    var dayActive = selectedDay && selectedDay !== "All";
                     var filtered = [];
                     var basePoints;
 
-                    if (!dayActive) {
-                        operatorSelect.disabled = true;
-                        networkSelect.disabled = true;
-                        populateSelect(operatorSelect, [], false);
-                        populateSelect(networkSelect, [], false);
-                        basePoints = pointsData.slice();
-                        lastSelectedDay = null;
+                    if (selectedDay && selectedDay !== "All") {
+                        basePoints = pointsForDay(selectedDay);
                     } else {
-                        var dayPoints = pointsForDay(selectedDay);
-                        var preserve = selectedDay === lastSelectedDay;
-                        populateSelect(operatorSelect, collectUnique(dayPoints, "operator"), preserve);
-                        populateSelect(networkSelect, collectUnique(dayPoints, "network"), preserve);
-                        operatorSelect.disabled = false;
-                        networkSelect.disabled = false;
-                        basePoints = dayPoints;
-                        lastSelectedDay = selectedDay;
+                        basePoints = pointsData.slice();
                     }
+
+                    var dayChanged = selectedDay !== lastSelections.day;
+                    populateSelect(
+                        reportSelect,
+                        collectUnique(basePoints, "report"),
+                        !dayChanged,
+                        [{ value: "AMBOS", label: "Ambos" }]
+                    );
+
+                    var selectedReport = reportSelect.value || "All";
+                    var normalizedReport = selectedReport === "AMBOS" ? "All" : selectedReport;
+                    var reportChanged = dayChanged || normalizedReport !== lastSelections.report;
+
+                    var reportFiltered = filterByReport(basePoints, selectedReport);
+                    reportSelect.disabled = basePoints.length === 0;
+
+                    populateSelect(
+                        operatorSelect,
+                        collectUnique(reportFiltered, "operator"),
+                        !reportChanged,
+                        []
+                    );
+                    populateSelect(
+                        networkSelect,
+                        collectUnique(reportFiltered, "network"),
+                        !reportChanged,
+                        []
+                    );
+
+                    operatorSelect.disabled = reportFiltered.length === 0;
+                    networkSelect.disabled = reportFiltered.length === 0;
 
                     var opValue = operatorSelect.value || "All";
                     var netValue = networkSelect.value || "All";
 
-                    for (var i = 0; i < basePoints.length; i += 1) {
-                        var point = basePoints[i];
+                    for (var i = 0; i < reportFiltered.length; i += 1) {
+                        var point = reportFiltered[i];
                         if (opValue !== "All" && point.operator !== opValue) {
                             continue;
                         }
@@ -709,6 +854,10 @@ class FilterPanel(MacroElement):
                     routeLayer.clearLayers();
 
                     if (filtered.length === 0) {
+                        lastSelections.day = selectedDay || "All";
+                        lastSelections.report = normalizedReport;
+                        lastSelections.operator = opValue;
+                        lastSelections.network = netValue;
                         return;
                     }
 
@@ -716,12 +865,13 @@ class FilterPanel(MacroElement):
                     for (var j = 0; j < filtered.length; j += 1) {
                         var filteredPoint = filtered[j];
                         var markerColor = colorForOperator(filteredPoint.operator);
+                        var markerRadius = filteredPoint.report === "BUFFER" ? 7 : 5;
                         var marker = L.circleMarker([filteredPoint.lat, filteredPoint.lon], {
-                            radius: 6,
+                            radius: markerRadius,
                             color: markerColor,
                             weight: 2,
                             fillColor: markerColor,
-                            fillOpacity: 0.85
+                            fillOpacity: filteredPoint.report === "BUFFER" ? 0.95 : 0.85
                         });
                         if (filteredPoint.tooltip) {
                             marker.bindTooltip(filteredPoint.tooltip);
@@ -738,7 +888,7 @@ class FilterPanel(MacroElement):
 
                     if (latLngs.length >= 2) {
                         var routeColor;
-                        if (dayActive && operatorSelect.value && operatorSelect.value !== "All") {
+                        if (operatorSelect.value && operatorSelect.value !== "All") {
                             routeColor = colorForOperator(operatorSelect.value);
                         } else {
                             var dominant = dominantOperator(filtered);
@@ -746,9 +896,15 @@ class FilterPanel(MacroElement):
                         }
                         L.polyline(latLngs, { color: routeColor, weight: 4, opacity: 0.6 }).addTo(routeLayer);
                     }
+
+                    lastSelections.day = selectedDay || "All";
+                    lastSelections.report = normalizedReport;
+                    lastSelections.operator = opValue;
+                    lastSelections.network = netValue;
                 }
 
                 daySelect.addEventListener("change", updateFilters);
+                reportSelect.addEventListener("change", updateFilters);
                 operatorSelect.addEventListener("change", updateFilters);
                 networkSelect.addEventListener("change", updateFilters);
 
@@ -774,6 +930,7 @@ def render_interactive_map(
     center_lon = points_sorted[0].lon
     fmap = Map(location=(center_lat, center_lon), zoom_start=13, tiles=tiles)
     days = sorted({p.send_time.date().isoformat() for p in points_sorted})
+    report_kinds = sorted({(p.report_kind or "RESP") for p in points_sorted})
     operators = sorted({(p.operator or "Desconocido") for p in points_sorted})
     networks = sorted({(p.network_label or "Desconocida") for p in points_sorted})
 
@@ -782,6 +939,7 @@ def render_interactive_map(
             "lat": point.lat,
             "lon": point.lon,
             "day": point.send_time.date().isoformat(),
+            "report": point.report_kind,
             "operator": point.operator or "Desconocido",
             "network": point.network_label or "Desconocida",
             "tooltip": _point_to_tooltip(point),
@@ -796,6 +954,7 @@ def render_interactive_map(
         FilterPanel(
             points_data=points_payload,
             day_options=days,
+            report_options=report_kinds,
             operator_options=operators,
             network_options=networks,
             operator_colors=OPERATOR_COLORS,
@@ -874,6 +1033,7 @@ def generate_map(
     base_dir: Path | str = Path("."),
     output_dir: Path | str = Path("."),
     day: Optional[str] = None,
+    report_types: Optional[Sequence[str]] = None,
     operators: Optional[Sequence[str]] = None,
     networks: Optional[Sequence[str]] = None,
     reports: Optional[Sequence[str]] = None,
@@ -883,7 +1043,13 @@ def generate_map(
     output_path = Path(output_dir)
 
     points = build_points(model=model, imei=imei, base_dir=base_path, reports=reports)
-    filtered = _filter_points(points, day=day, operators=operators, networks=networks)
+    filtered = _filter_points(
+        points,
+        day=day,
+        report_types=report_types,
+        operators=operators,
+        networks=networks,
+    )
     if not filtered:
         raise ValueError("Los filtros aplicados no devolvieron puntos para el mapa")
 
