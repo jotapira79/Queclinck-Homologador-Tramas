@@ -149,7 +149,10 @@ def test_filter_points_accepts_all_keyword_for_every_filter():
 
     assert _filter_points(points, operators=["All"]) == points
     assert _filter_points(points, networks=["ALL"]) == points
+    assert _filter_points(points, operators=["Todos"]) == points
+    assert _filter_points(points, networks=["TODOS"]) == points
     assert _filter_points(points, day="all") == points
+    assert _filter_points(points, day="TODOS") == points
 
 
 def test_filter_points_day_filter_has_priority():

@@ -190,7 +190,7 @@ def _load_locations_from_db(
     _register_sqlite_helpers(conn)
     conn.row_factory = sqlite3.Row
     try:
-        table = _detect_table(conn, report, model)
+        table = _detect_table(conn, report, model, imei)
         columns = _load_table_schema(conn, table)
 
         imei_col = _first_existing(IMEI_CANDIDATES, columns)
@@ -313,7 +313,7 @@ def _load_gtinf_records(db_path: Path, model: str, imei: str) -> List[InfoRecord
     conn = ensure_db(db_path)
     _register_sqlite_helpers(conn)
     conn.row_factory = sqlite3.Row
-    table = _detect_table(conn, "gtinf", model)
+    table = _detect_table(conn, "gtinf", model, imei)
     columns = _load_table_schema(conn, table)
 
     imei_col = _first_existing(IMEI_CANDIDATES, columns)
@@ -393,6 +393,30 @@ def _associate_info(points: List[LocationPoint], infos: List[InfoRecord]) -> Non
 # Filtros --------------------------------------------------------------------
 
 
+def _is_all_keyword(value: Optional[str]) -> bool:
+    if value in (None, ""):
+        return False
+    normalized = value.strip().lower()
+    return normalized in {"all", "todos", "todas"}
+
+
+def _normalize_filter_values(values: Optional[Sequence[str]]) -> Optional[set[str]]:
+    if not values:
+        return None
+
+    normalized: set[str] = set()
+    for raw in values:
+        if raw in (None, ""):
+            continue
+        text = str(raw).strip()
+        if not text:
+            continue
+        if _is_all_keyword(text):
+            return None
+        normalized.add(text.lower())
+    return normalized or None
+
+
 def _filter_points(
     points: List[LocationPoint],
     day: Optional[str] = None,
@@ -401,21 +425,10 @@ def _filter_points(
 ) -> List[LocationPoint]:
     """Filtra puntos aplicando prioridad al día antes que otros filtros."""
 
-    normalized_ops = (
-        {op.strip().lower() for op in operators if op is not None}
-        if operators
-        else None
-    )
-    normalized_networks = (
-        {nt.strip().lower() for nt in networks if nt is not None}
-        if networks
-        else None
-    )
-
     day_value: Optional[datetime] = None
     if day:
         day_clean = day.strip()
-        if day_clean.lower() != "all":
+        if day_clean and not _is_all_keyword(day_clean):
             try:
                 day_value = datetime.strptime(day_clean, "%Y-%m-%d")
             except ValueError as exc:  # pragma: no cover - validación de CLI
@@ -424,27 +437,21 @@ def _filter_points(
     # Priorizamos la selección por día. Si no se especifica un día, se mantienen todos
     # los puntos disponibles y los filtros complementarios quedan deshabilitados.
     if day_value is None:
-        day_filtered = list(points)
-        operator_set = None
-        network_set = None
-    else:
-        day_filtered = [
-            point for point in points if point.send_time.date() == day_value.date()
-        ]
-        operator_set = (
-            None if not normalized_ops or "all" in normalized_ops else normalized_ops
-        )
-        network_set = (
-            None
-            if not normalized_networks or "all" in normalized_networks
-            else normalized_networks
-        )
+        return list(points)
+
+    operator_set = _normalize_filter_values(operators)
+    network_set = _normalize_filter_values(networks)
 
     result: List[LocationPoint] = []
-    for point in day_filtered:
-        if operator_set and (point.operator or "").lower() not in operator_set:
+    day_date = day_value.date()
+    for point in points:
+        if point.send_time.date() != day_date:
             continue
-        if network_set and (point.network_label or "").lower() not in network_set:
+        operator_value = (point.operator or "").strip().lower()
+        if operator_set and operator_value not in operator_set:
+            continue
+        network_value = (point.network_label or "").strip().lower()
+        if network_set and network_value not in network_set:
             continue
         result.append(point)
     return result
@@ -542,21 +549,21 @@ class FilterPanel(MacroElement):
                     <div style="font-weight: bold; margin-bottom: 8px; font-size: 14px;">Filtros</div>
                     <label for="{{ this.get_name() }}_day" style="display:block; font-weight:bold; margin-bottom:4px;">Día</label>
                     <select id="{{ this.get_name() }}_day" style="width:100%; margin-bottom:10px; padding:4px;">
-                        <option value="All">Todos</option>
+                        <option value="Todos">Todos</option>
                         {% for day in this.day_options %}
                         <option value="{{ day }}" {% if day == this.initial_day %}selected{% endif %}>{{ day }}</option>
                         {% endfor %}
                     </select>
                     <label for="{{ this.get_name() }}_operator" style="display:block; font-weight:bold; margin-bottom:4px;">Operador</label>
                     <select id="{{ this.get_name() }}_operator" style="width:100%; margin-bottom:10px; padding:4px;" disabled>
-                        <option value="All" selected>Todos</option>
+                        <option value="Todos" selected>Todos</option>
                         {% for operator in this.operator_options %}
                         <option value="{{ operator }}">{{ operator }}</option>
                         {% endfor %}
                     </select>
                     <label for="{{ this.get_name() }}_network" style="display:block; font-weight:bold; margin-bottom:4px;">Tecnología</label>
                     <select id="{{ this.get_name() }}_network" style="width:100%; padding:4px;" disabled>
-                        <option value="All" selected>Todos</option>
+                        <option value="Todos" selected>Todos</option>
                         {% for network in this.network_options %}
                         <option value="{{ network }}">{{ network }}</option>
                         {% endfor %}
@@ -576,6 +583,19 @@ class FilterPanel(MacroElement):
                 var networkSelect = document.getElementById(panelId + "_network");
                 var markersLayer = L.layerGroup().addTo(mapObj);
                 var routeLayer = L.layerGroup().addTo(mapObj);
+                var lastSelectedDay = null;
+                var ALL_KEYWORDS = { "todos": true, "todas": true, "all": true };
+
+                function isAllValue(value) {
+                    if (value === undefined || value === null) {
+                        return true;
+                    }
+                    var text = String(value).trim();
+                    if (text === "") {
+                        return true;
+                    }
+                    return ALL_KEYWORDS.hasOwnProperty(text.toLowerCase());
+                }
 
                 function colorForOperator(operator) {
                     if (operatorColors.hasOwnProperty(operator)) {
@@ -607,37 +627,91 @@ class FilterPanel(MacroElement):
                     return chosen;
                 }
 
-                function updateFilters() {
-                    var selectedDay = daySelect.value;
-                    var dayActive = selectedDay && selectedDay !== "All";
-                    operatorSelect.disabled = !dayActive;
-                    networkSelect.disabled = !dayActive;
-                    if (!dayActive) {
-                        operatorSelect.value = "All";
-                        networkSelect.value = "All";
+                function collectUnique(points, key) {
+                    var seen = {};
+                    for (var i = 0; i < points.length; i += 1) {
+                        var value = points[i][key];
+                        if (value && !seen.hasOwnProperty(value)) {
+                            seen[value] = true;
+                        }
                     }
+                    var values = [];
+                    for (var candidate in seen) {
+                        if (seen.hasOwnProperty(candidate)) {
+                            values.push(candidate);
+                        }
+                    }
+                    values.sort();
+                    return values;
+                }
 
-                    var filtered = [];
+                function populateSelect(selectElement, values, preserveSelection) {
+                    var previousValue = preserveSelection ? selectElement.value : "Todos";
+                    if (!previousValue || isAllValue(previousValue)) {
+                        previousValue = "Todos";
+                    }
+                    selectElement.innerHTML = "";
+                    var allOption = document.createElement("option");
+                    allOption.value = "Todos";
+                    allOption.textContent = "Todos";
+                    selectElement.appendChild(allOption);
+                    for (var i = 0; i < values.length; i += 1) {
+                        var option = document.createElement("option");
+                        option.value = values[i];
+                        option.textContent = values[i];
+                        selectElement.appendChild(option);
+                    }
+                    if (preserveSelection && values.indexOf(previousValue) !== -1) {
+                        selectElement.value = previousValue;
+                    } else {
+                        selectElement.value = "Todos";
+                    }
+                }
+
+                function pointsForDay(dayValue) {
+                    var dayPoints = [];
                     for (var i = 0; i < pointsData.length; i += 1) {
                         var point = pointsData[i];
-                        if (dayActive && point.day !== selectedDay) {
-                            continue;
+                        if (point.day === dayValue) {
+                            dayPoints.push(point);
                         }
-                        if (dayActive) {
-                            var opValue = operatorSelect.value || "All";
-                            if (opValue !== "All" && point.operator !== opValue) {
-                                continue;
-                            }
-                            var netValue = networkSelect.value || "All";
-                            if (netValue !== "All" && point.network !== netValue) {
-                                continue;
-                            }
-                        }
-                        filtered.push(point);
                     }
+                    return dayPoints;
+                }
+
+                function updateFilters() {
+                    var selectedDay = daySelect.value;
+                    var dayActive = selectedDay && !isAllValue(selectedDay);
+                    var basePoints = dayActive ? pointsForDay(selectedDay) : pointsData.slice();
+                    var filtered = [];
 
                     if (!dayActive) {
-                        filtered = pointsData.slice();
+                        operatorSelect.disabled = true;
+                        networkSelect.disabled = true;
+                        populateSelect(operatorSelect, [], false);
+                        populateSelect(networkSelect, [], false);
+                        lastSelectedDay = null;
+                    } else {
+                        var preserve = selectedDay === lastSelectedDay;
+                        populateSelect(operatorSelect, collectUnique(basePoints, "operator"), preserve);
+                        populateSelect(networkSelect, collectUnique(basePoints, "network"), preserve);
+                        operatorSelect.disabled = false;
+                        networkSelect.disabled = false;
+                        lastSelectedDay = selectedDay;
+                    }
+
+                    var opValue = operatorSelect.value;
+                    var netValue = networkSelect.value;
+
+                    for (var i = 0; i < basePoints.length; i += 1) {
+                        var point = basePoints[i];
+                        if (dayActive && !isAllValue(opValue) && point.operator !== opValue) {
+                            continue;
+                        }
+                        if (dayActive && !isAllValue(netValue) && point.network !== netValue) {
+                            continue;
+                        }
+                        filtered.push(point);
                     }
 
                     filtered.sort(function(a, b) {
@@ -683,7 +757,7 @@ class FilterPanel(MacroElement):
 
                     if (latLngs.length >= 2) {
                         var routeColor;
-                        if (dayActive && operatorSelect.value && operatorSelect.value !== "All") {
+                        if (dayActive && operatorSelect.value && !isAllValue(operatorSelect.value)) {
                             routeColor = colorForOperator(operatorSelect.value);
                         } else {
                             var dominant = dominantOperator(filtered);
@@ -735,7 +809,7 @@ def render_interactive_map(
         for point in points_sorted
     ]
 
-    initial_day = days[0] if days else "All"
+    initial_day = days[0] if days else "Todos"
 
     fmap.get_root().add_child(
         FilterPanel(
@@ -779,6 +853,7 @@ def build_points(
                 report=report,
                 model=model_clean,
                 base_dir=base_dir,
+                imei=imei,
             )
         except FileNotFoundError:
             searched_paths.append(db_path)
