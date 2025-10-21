@@ -17,9 +17,9 @@ Instala los paquetes mínimos para los mapas con:
 pip install folium pytz python-dateutil
 ```
 
-## Homologación de tramas GTINF/GTERI
+## Homologación de tramas GTINF/GTERI/GTFRI
 
-Ejemplo rápido para convertir un archivo de tramas a SQLite:
+Ejemplo rápido para convertir un archivo de tramas a SQLite en PowerShell:
 
 ```bash
 python queclink_tramas.py --in datos.txt --out salida.db
