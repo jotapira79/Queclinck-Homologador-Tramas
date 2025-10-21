@@ -698,7 +698,7 @@ class FilterPanel(MacroElement):
                     var pointsData;
                     var operatorColors;
                     try {
-                        pointsData = JSON.parse({{ this.points_json | tojson }});
+                        pointsData = JSON.parse({{ this.points_json | tojson | safe }});
                         operatorColors = JSON.parse({{ this.operator_colors_json | tojson }});
                     } catch (parseError) {
                         console.error("FilterPanel JSON parse error:", parseError);
