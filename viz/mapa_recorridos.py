@@ -614,8 +614,8 @@ class FilterPanel(MacroElement):
             )
         super().__init__()
         self._name = "FilterPanel"
-        self.points_json = json.dumps(points_data, ensure_ascii=False)
-        self.operator_colors_json = json.dumps(operator_colors, ensure_ascii=False)
+        self.points_json = points_data
+        self.operator_colors_json = operator_colors
         self.day_options = day_options
         self.report_options = report_options
         self.operator_options = operator_options
@@ -661,303 +661,359 @@ class FilterPanel(MacroElement):
             {% endmacro %}
 
             {% macro script(this, kwargs) %}
+            <script>
             (function() {
-                var mapObj = {{ this._parent.get_name() }};
-                var pointsData = {{ this.points_json | safe }};
-                var operatorColors = {{ this.operator_colors_json | safe }};
-                var panelId = "{{ this.get_name() }}";
-                var daySelect = document.getElementById(panelId + "_day");
-                var reportSelect = document.getElementById(panelId + "_report");
-                var operatorSelect = document.getElementById(panelId + "_operator");
-                var networkSelect = document.getElementById(panelId + "_network");
-                var markersLayer = L.layerGroup().addTo(mapObj);
-                var routeLayer = L.layerGroup().addTo(mapObj);
-                var lastSelections = {
-                    day: null,
-                    report: null,
-                    operator: null,
-                    network: null
-                };
-
-                function colorForOperator(operator) {
-                    if (operatorColors.hasOwnProperty(operator)) {
-                        return operatorColors[operator];
+                function _findFoliumMapKey() {
+                    for (var k in window) {
+                        if (Object.prototype.hasOwnProperty.call(window, k) &&
+                            /^map_[a-f0-9]+$/i.test(k) &&
+                            window[k] && typeof window[k].fitBounds === "function") {
+                            return k;
+                        }
                     }
-                    if (operatorColors.hasOwnProperty("Desconocido")) {
-                        return operatorColors["Desconocido"];
-                    }
-                    return "#7f7f7f";
+                    return null;
                 }
 
-                function dominantOperator(points) {
-                    var counts = {};
-                    for (var idx = 0; idx < points.length; idx += 1) {
-                        var current = points[idx].operator;
-                        counts[current] = (counts[current] || 0) + 1;
-                    }
-                    var chosen = null;
-                    var maxCount = -1;
-                    for (var key in counts) {
-                        if (!counts.hasOwnProperty(key)) {
-                            continue;
-                        }
-                        if (counts[key] > maxCount) {
-                            chosen = key;
-                            maxCount = counts[key];
+                function _findFoliumFigureKey() {
+                    for (var k in window) {
+                        if (Object.prototype.hasOwnProperty.call(window, k) &&
+                            /^figure_[a-f0-9]+$/i.test(k) &&
+                            window[k]) {
+                            return k;
                         }
                     }
-                    return chosen;
+                    return null;
                 }
 
-                function collectUnique(points, key) {
-                    var seen = {};
-                    for (var i = 0; i < points.length; i += 1) {
-                        var value = points[i][key];
-                        if (value && !seen.hasOwnProperty(value)) {
-                            seen[value] = true;
+                function _initFilterPanel() {
+                    var figKey = _findFoliumFigureKey();
+                    var mapKey = _findFoliumMapKey();
+                    if (!figKey || !mapKey) {
+                        return setTimeout(_initFilterPanel, 50);
+                    }
+
+                    var figureObj = window[figKey];
+                    var mapObj = window[mapKey];
+
+                    var pointsData;
+                    var operatorColors;
+                    try {
+                        pointsData = JSON.parse({{ this.points_json | tojson }});
+                        operatorColors = JSON.parse({{ this.operator_colors_json | tojson }});
+                    } catch (parseError) {
+                        console.error("FilterPanel JSON parse error:", parseError);
+                        return;
+                    }
+
+                    var panelId = "{{ this.get_name() }}";
+                    var daySelect = document.getElementById(panelId + "_day");
+                    var reportSelect = document.getElementById(panelId + "_report");
+                    var operatorSelect = document.getElementById(panelId + "_operator");
+                    var networkSelect = document.getElementById(panelId + "_network");
+                    if (!daySelect || !reportSelect || !operatorSelect || !networkSelect) {
+                        console.error("FilterPanel init error: missing select elements");
+                        return;
+                    }
+
+                    var markersLayer = L.layerGroup().addTo(mapObj);
+                    var routeLayer = L.layerGroup().addTo(mapObj);
+                    var lastSelections = {
+                        day: null,
+                        report: null,
+                        operator: null,
+                        network: null
+                    };
+
+                    function colorForOperator(operator) {
+                        if (operatorColors.hasOwnProperty(operator)) {
+                            return operatorColors[operator];
+                        }
+                        if (operatorColors.hasOwnProperty("Desconocido")) {
+                            return operatorColors["Desconocido"];
+                        }
+                        return "#7f7f7f";
+                    }
+
+                    function dominantOperator(points) {
+                        var counts = {};
+                        for (var idx = 0; idx < points.length; idx += 1) {
+                            var current = points[idx].operator;
+                            counts[current] = (counts[current] || 0) + 1;
+                        }
+                        var chosen = null;
+                        var maxCount = -1;
+                        for (var key in counts) {
+                            if (!counts.hasOwnProperty(key)) {
+                                continue;
+                            }
+                            if (counts[key] > maxCount) {
+                                chosen = key;
+                                maxCount = counts[key];
+                            }
+                        }
+                        return chosen;
+                    }
+
+                    function collectUnique(points, key) {
+                        var seen = {};
+                        for (var i = 0; i < points.length; i += 1) {
+                            var value = points[i][key];
+                            if (value && !seen.hasOwnProperty(value)) {
+                                seen[value] = true;
+                            }
+                        }
+                        var values = [];
+                        for (var candidate in seen) {
+                            if (seen.hasOwnProperty(candidate)) {
+                                values.push(candidate);
+                            }
+                        }
+                        values.sort();
+                        return values;
+                    }
+
+                    function populateSelect(selectElement, values, preserveSelection, extraOptions) {
+                        var previousValue = preserveSelection ? selectElement.value : "All";
+                        selectElement.innerHTML = "";
+                        var allOption = document.createElement("option");
+                        allOption.value = "All";
+                        allOption.textContent = "Todos";
+                        selectElement.appendChild(allOption);
+                        if (extraOptions && extraOptions.length) {
+                            for (var eo = 0; eo < extraOptions.length; eo += 1) {
+                                var extra = extraOptions[eo];
+                                var extraOption = document.createElement("option");
+                                extraOption.value = extra.value;
+                                extraOption.textContent = extra.label;
+                                if (extra.disabled) {
+                                    extraOption.disabled = true;
+                                }
+                                selectElement.appendChild(extraOption);
+                            }
+                        }
+                        for (var i = 0; i < values.length; i += 1) {
+                            var option = document.createElement("option");
+                            option.value = values[i];
+                            option.textContent = values[i];
+                            selectElement.appendChild(option);
+                        }
+                        var normalizedPrevious = previousValue === "AMBOS" ? "All" : previousValue;
+                        if (
+                            preserveSelection &&
+                            (
+                                previousValue === "AMBOS" ||
+                                values.indexOf(normalizedPrevious) !== -1
+                            )
+                        ) {
+                            selectElement.value = previousValue;
+                        } else {
+                            selectElement.value = "All";
+                        }
+                        if (
+                            selectElement.value !== "All" &&
+                            values.indexOf(selectElement.value) === -1
+                        ) {
+                            selectElement.value = "All";
                         }
                     }
-                    var values = [];
-                    for (var candidate in seen) {
-                        if (seen.hasOwnProperty(candidate)) {
-                            values.push(candidate);
+
+                    function populateReportSelect(points, preserveSelection) {
+                        var availableValues = collectUnique(points, "report");
+                        var availableSet = {};
+                        for (var idx = 0; idx < availableValues.length; idx += 1) {
+                            availableSet[availableValues[idx]] = true;
                         }
-                    }
-                    values.sort();
-                    return values;
-                }
-
-                function populateSelect(selectElement, values, preserveSelection, extraOptions) {
-                    var previousValue = preserveSelection ? selectElement.value : "All";
-                    selectElement.innerHTML = "";
-                    var allOption = document.createElement("option");
-                    allOption.value = "All";
-                    allOption.textContent = "Todos";
-                    selectElement.appendChild(allOption);
-                    if (extraOptions && extraOptions.length) {
-                        for (var eo = 0; eo < extraOptions.length; eo += 1) {
-                            var extra = extraOptions[eo];
-                            var extraOption = document.createElement("option");
-                            extraOption.value = extra.value;
-                            extraOption.textContent = extra.label;
-                            selectElement.appendChild(extraOption);
+                        var previousValue = preserveSelection ? reportSelect.value : "AMBOS";
+                        if (previousValue !== "BUFFER" && previousValue !== "RESP") {
+                            previousValue = "AMBOS";
+                        } else if (!availableSet[previousValue]) {
+                            previousValue = "AMBOS";
                         }
-                    }
-                    for (var i = 0; i < values.length; i += 1) {
-                        var option = document.createElement("option");
-                        option.value = values[i];
-                        option.textContent = values[i];
-                        selectElement.appendChild(option);
-                    }
-                    var normalizedPrevious = previousValue === "AMBOS" ? "All" : previousValue;
-                    if (
-                        preserveSelection &&
-                        (
-                            previousValue === "AMBOS" ||
-                            values.indexOf(normalizedPrevious) !== -1
-                        )
-                    ) {
-                        selectElement.value = previousValue;
-                    } else {
-                        selectElement.value = "All";
-                    }
-                    if (
-                        selectElement.value !== "All" &&
-                        values.indexOf(selectElement.value) === -1
-                    ) {
-                        selectElement.value = "All";
-                    }
-                }
-
-                function populateReportSelect(points, preserveSelection) {
-                    var availableValues = collectUnique(points, "report");
-                    var availableSet = {};
-                    for (var idx = 0; idx < availableValues.length; idx += 1) {
-                        availableSet[availableValues[idx]] = true;
-                    }
-                    var previousValue = preserveSelection ? reportSelect.value : "AMBOS";
-                    if (previousValue !== "BUFFER" && previousValue !== "RESP") {
-                        previousValue = "AMBOS";
-                    } else if (!availableSet[previousValue]) {
-                        previousValue = "AMBOS";
-                    }
-                    var order = ["AMBOS", "BUFFER", "RESP"];
-                    reportSelect.innerHTML = "";
-                    for (var i = 0; i < order.length; i += 1) {
-                        var option = document.createElement("option");
-                        option.value = order[i];
-                        option.textContent = order[i];
-                        if (order[i] !== "AMBOS" && !availableSet[order[i]]) {
-                            option.disabled = true;
+                        var order = ["AMBOS", "BUFFER", "RESP"];
+                        reportSelect.innerHTML = "";
+                        for (var i = 0; i < order.length; i += 1) {
+                            var option = document.createElement("option");
+                            option.value = order[i];
+                            option.textContent = order[i];
+                            if (order[i] !== "AMBOS" && !availableSet[order[i]]) {
+                                option.disabled = true;
+                            }
+                            reportSelect.appendChild(option);
                         }
-                        reportSelect.appendChild(option);
+                        reportSelect.value = previousValue;
                     }
-                    reportSelect.value = previousValue;
-                }
 
-                function pointsForDay(dayValue) {
-                    var normalizedDay = (dayValue || "").trim();
-                    var dayPoints = [];
-                    for (var i = 0; i < pointsData.length; i += 1) {
-                        var point = pointsData[i];
-                        var pointDay = (point.day || "").trim();
-                        if (pointDay === normalizedDay) {
-                            dayPoints.push(point);
+                    function pointsForDay(dayValue) {
+                        var normalizedDay = (dayValue || "").trim();
+                        var dayPoints = [];
+                        for (var i = 0; i < pointsData.length; i += 1) {
+                            var point = pointsData[i];
+                            var pointDay = (point.day || "").trim();
+                            if (pointDay === normalizedDay) {
+                                dayPoints.push(point);
+                            }
                         }
+                        return dayPoints;
                     }
-                    return dayPoints;
-                }
 
-                function filterByReport(points, reportValue) {
-                    if (!points.length) {
-                        return [];
-                    }
-                    var normalizedReport = (reportValue || "").trim().toUpperCase();
-                    if (!normalizedReport || normalizedReport === "AMBOS" || normalizedReport === "ALL") {
-                        return points.slice();
-                    }
-                    var normalizedValue = normalizedReport;
-                    var filtered = [];
-                    for (var i = 0; i < points.length; i += 1) {
-                        var pointReport = ((points[i].report || "").trim().toUpperCase());
-                        if (pointReport === normalizedValue) {
-                            filtered.push(points[i]);
+                    function filterByReport(points, reportValue) {
+                        if (!points.length) {
+                            return [];
                         }
-                    }
-                    return filtered;
-                }
-
-                function updateFilters() {
-                    var selectedDay = daySelect.value;
-                    var filtered = [];
-                    var basePoints;
-
-                    console.debug('[Filters] total points:', pointsData.length);
-                    console.debug('[Filters] selectedDay:', selectedDay);
-
-                    if (selectedDay && selectedDay !== "All") {
-                        basePoints = pointsForDay(selectedDay);
-                    } else {
-                        basePoints = pointsData.slice();
+                        var normalizedReport = (reportValue || "").trim().toUpperCase();
+                        if (!normalizedReport || normalizedReport === "AMBOS" || normalizedReport === "ALL") {
+                            return points.slice();
+                        }
+                        var normalizedValue = normalizedReport;
+                        var filtered = [];
+                        for (var i = 0; i < points.length; i += 1) {
+                            var pointReport = ((points[i].report || "").trim().toUpperCase());
+                            if (pointReport === normalizedValue) {
+                                filtered.push(points[i]);
+                            }
+                        }
+                        return filtered;
                     }
 
-                    console.debug('[Filters] basePoints:', basePoints.length);
+                    function updateFilters() {
+                        var selectedDay = daySelect.value;
+                        var filtered = [];
+                        var basePoints;
 
-                    var dayChanged = selectedDay !== lastSelections.day;
-                    populateReportSelect(basePoints, !dayChanged);
+                        console.debug('[Filters] total points:', pointsData.length);
+                        console.debug('[Filters] selectedDay:', selectedDay);
 
-                    var selectedReport = reportSelect.value || "AMBOS";
-                    if (selectedReport === "AMBOS") {
-                        selectedReport = "All";
-                    }
-                    console.debug('[Filters] selectedReport:', selectedReport);
-                    var reportChanged = dayChanged || selectedReport !== lastSelections.report;
-
-                    var reportFiltered = filterByReport(basePoints, selectedReport);
-                    console.debug('[Filters] reportFiltered:', reportFiltered.length);
-
-                    populateSelect(
-                        operatorSelect,
-                        collectUnique(reportFiltered, "operator"),
-                        !reportChanged,
-                        []
-                    );
-                    populateSelect(
-                        networkSelect,
-                        collectUnique(reportFiltered, "network"),
-                        !reportChanged,
-                        []
-                    );
-
-
-                    var opValue = operatorSelect.value || "All";
-                    var netValue = networkSelect.value || "All";
-                    console.debug('[Filters] operator value:', opValue, 'network value:', netValue);
-
-                    for (var i = 0; i < reportFiltered.length; i += 1) {
-                        var point = reportFiltered[i];
-                        if (opValue !== "All" && point.operator !== opValue) {
-                            continue;
+                        if (selectedDay && selectedDay !== "All") {
+                            basePoints = pointsForDay(selectedDay);
+                        } else {
+                            basePoints = pointsData.slice();
                         }
-                        if (netValue !== "All" && point.network !== netValue) {
-                            continue;
+
+                        console.debug('[Filters] basePoints:', basePoints.length);
+
+                        var dayChanged = selectedDay !== lastSelections.day;
+                        populateReportSelect(basePoints, !dayChanged);
+
+                        var selectedReport = reportSelect.value || "AMBOS";
+                        if (selectedReport === "AMBOS") {
+                            selectedReport = "All";
                         }
-                        filtered.push(point);
-                    }
+                        console.debug('[Filters] selectedReport:', selectedReport);
+                        var reportChanged = dayChanged || selectedReport !== lastSelections.report;
 
-                    console.debug('[Filters] final filtered:', filtered.length);
+                        var reportFiltered = filterByReport(basePoints, selectedReport);
+                        console.debug('[Filters] reportFiltered:', reportFiltered.length);
 
-                    filtered.sort(function(a, b) {
-                        if (a.timestamp < b.timestamp) {
-                            return -1;
+                        populateSelect(
+                            operatorSelect,
+                            collectUnique(reportFiltered, "operator"),
+                            !reportChanged,
+                            []
+                        );
+                        populateSelect(
+                            networkSelect,
+                            collectUnique(reportFiltered, "network"),
+                            !reportChanged,
+                            []
+                        );
+
+                        var opValue = operatorSelect.value || "All";
+                        var netValue = networkSelect.value || "All";
+                        console.debug('[Filters] operator value:', opValue, 'network value:', netValue);
+
+                        for (var i = 0; i < reportFiltered.length; i += 1) {
+                            var point = reportFiltered[i];
+                            if (opValue !== "All" && point.operator !== opValue) {
+                                continue;
+                            }
+                            if (netValue !== "All" && point.network !== netValue) {
+                                continue;
+                            }
+                            filtered.push(point);
                         }
-                        if (a.timestamp > b.timestamp) {
-                            return 1;
+
+                        console.debug('[Filters] final filtered:', filtered.length);
+
+                        filtered.sort(function(a, b) {
+                            if (a.timestamp < b.timestamp) {
+                                return -1;
+                            }
+                            if (a.timestamp > b.timestamp) {
+                                return 1;
+                            }
+                            return 0;
+                        });
+
+                        markersLayer.clearLayers();
+                        routeLayer.clearLayers();
+
+                        if (filtered.length === 0) {
+                            lastSelections.day = selectedDay || "All";
+                            lastSelections.report = selectedReport;
+                            lastSelections.operator = opValue;
+                            lastSelections.network = netValue;
+                            return;
                         }
-                        return 0;
-                    });
 
-                    markersLayer.clearLayers();
-                    routeLayer.clearLayers();
+                        var latLngs = [];
+                        for (var j = 0; j < filtered.length; j += 1) {
+                            var filteredPoint = filtered[j];
+                            var markerColor = colorForOperator(filteredPoint.operator);
+                            var markerRadius = filteredPoint.report === "BUFFER" ? 7 : 5;
+                            var marker = L.circleMarker([filteredPoint.lat, filteredPoint.lon], {
+                                radius: markerRadius,
+                                color: markerColor,
+                                weight: 2,
+                                fillColor: markerColor,
+                                fillOpacity: filteredPoint.report === "BUFFER" ? 0.95 : 0.85
+                            });
+                            if (filteredPoint.tooltip) {
+                                marker.bindTooltip(filteredPoint.tooltip);
+                            }
+                            marker.addTo(markersLayer);
+                            latLngs.push([filteredPoint.lat, filteredPoint.lon]);
+                        }
 
-                    if (filtered.length === 0) {
+                        if (latLngs.length === 1) {
+                            mapObj.setView(latLngs[0], 15);
+                        } else {
+                            mapObj.fitBounds(latLngs, { padding: [30, 30] });
+                        }
+
+                        if (latLngs.length >= 2) {
+                            var routeColor;
+                            if (operatorSelect.value && operatorSelect.value !== "All") {
+                                routeColor = colorForOperator(operatorSelect.value);
+                            } else {
+                                var dominant = dominantOperator(filtered);
+                                routeColor = dominant ? colorForOperator(dominant) : "#7f7f7f";
+                            }
+                            L.polyline(latLngs, { color: routeColor, weight: 4, opacity: 0.6 }).addTo(routeLayer);
+                        }
+
                         lastSelections.day = selectedDay || "All";
                         lastSelections.report = selectedReport;
                         lastSelections.operator = opValue;
                         lastSelections.network = netValue;
-                        return;
                     }
 
-                    var latLngs = [];
-                    for (var j = 0; j < filtered.length; j += 1) {
-                        var filteredPoint = filtered[j];
-                        var markerColor = colorForOperator(filteredPoint.operator);
-                        var markerRadius = filteredPoint.report === "BUFFER" ? 7 : 5;
-                        var marker = L.circleMarker([filteredPoint.lat, filteredPoint.lon], {
-                            radius: markerRadius,
-                            color: markerColor,
-                            weight: 2,
-                            fillColor: markerColor,
-                            fillOpacity: filteredPoint.report === "BUFFER" ? 0.95 : 0.85
-                        });
-                        if (filteredPoint.tooltip) {
-                            marker.bindTooltip(filteredPoint.tooltip);
-                        }
-                        marker.addTo(markersLayer);
-                        latLngs.push([filteredPoint.lat, filteredPoint.lon]);
-                    }
+                    daySelect.addEventListener("change", updateFilters);
+                    reportSelect.addEventListener("change", updateFilters);
+                    operatorSelect.addEventListener("change", updateFilters);
+                    networkSelect.addEventListener("change", updateFilters);
 
-                    if (latLngs.length === 1) {
-                        mapObj.setView(latLngs[0], 15);
-                    } else {
-                        mapObj.fitBounds(latLngs, { padding: [30, 30] });
-                    }
-
-                    if (latLngs.length >= 2) {
-                        var routeColor;
-                        if (operatorSelect.value && operatorSelect.value !== "All") {
-                            routeColor = colorForOperator(operatorSelect.value);
-                        } else {
-                            var dominant = dominantOperator(filtered);
-                            routeColor = dominant ? colorForOperator(dominant) : "#7f7f7f";
-                        }
-                        L.polyline(latLngs, { color: routeColor, weight: 4, opacity: 0.6 }).addTo(routeLayer);
-                    }
-
-                    lastSelections.day = selectedDay || "All";
-                    lastSelections.report = selectedReport;
-                    lastSelections.operator = opValue;
-                    lastSelections.network = netValue;
+                    updateFilters();
                 }
 
-                daySelect.addEventListener("change", updateFilters);
-                reportSelect.addEventListener("change", updateFilters);
-                operatorSelect.addEventListener("change", updateFilters);
-                networkSelect.addEventListener("change", updateFilters);
-
-                updateFilters();
+                if (document.readyState === "loading") {
+                    document.addEventListener("DOMContentLoaded", _initFilterPanel);
+                } else {
+                    _initFilterPanel();
+                }
             })();
+            </script>
             {% endmacro %}
+
             """
         )
 
