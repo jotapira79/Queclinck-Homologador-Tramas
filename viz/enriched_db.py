@@ -38,7 +38,7 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition
 
 
 def _load_gtinf_lookup(
-    gtinf_path: Path, model: str
+    gtinf_path: Path, model: str, imei: str | None = None
 ) -> Dict[str, List[Tuple[datetime, str, str, Optional[float]]]]:
     if not gtinf_path.exists():
         return {}
@@ -46,7 +46,7 @@ def _load_gtinf_lookup(
     conn = ensure_db(gtinf_path)
     conn.row_factory = sqlite3.Row
     try:
-        table = detect_table(conn, "gtinf", model)
+        table = detect_table(conn, "gtinf", model, imei)
         columns = load_table_schema(conn, table)
         imei_col = first_existing(IMEI_CANDIDATES, columns)
         time_col = first_existing(TIME_CANDIDATES, columns)
@@ -90,7 +90,9 @@ def _resolve_output_path(base_dir: Path, report: str, model: str) -> Path:
     return base_dir / name
 
 
-def ensure_enriched_database(*, report: str, model: str, base_dir: Path | str) -> Path:
+def ensure_enriched_database(
+    *, report: str, model: str, base_dir: Path | str, imei: str | None = None
+) -> Path:
     """Genera (si es necesario) una copia enriquecida de la base de recorridos."""
 
     base_path = Path(base_dir)
@@ -120,7 +122,7 @@ def ensure_enriched_database(*, report: str, model: str, base_dir: Path | str) -
         conn = ensure_db(output_path)
         conn.row_factory = sqlite3.Row
         try:
-            table = detect_table(conn, report_clean, model_clean)
+            table = detect_table(conn, report_clean, model_clean, imei)
             _ensure_column(conn, table, "tecnologia_celular", "TEXT")
             _ensure_column(conn, table, "calidad_senal", "TEXT")
             _ensure_column(conn, table, "nivel_senal_dbm", "REAL")
@@ -138,7 +140,7 @@ def ensure_enriched_database(*, report: str, model: str, base_dir: Path | str) -
             )
             conn.execute(f'UPDATE "{table}" SET "operador" = "Desconocido"')
 
-            gtinf_lookup = _load_gtinf_lookup(gtinf_path, model_clean)
+            gtinf_lookup = _load_gtinf_lookup(gtinf_path, model_clean, imei)
             if not gtinf_lookup:
                 conn.commit()
             else:

@@ -181,8 +181,15 @@ def first_existing(
     return None
 
 
-def detect_table(conn, report: str, model: str) -> str:
-    """Detecta el nombre de tabla apropiado para un reporte/modelo."""
+def detect_table(conn, report: str, model: str, imei: str | None = None) -> str:
+    """Detecta el nombre de tabla apropiado para un reporte/modelo/IMEI.
+
+    Cuando ``imei`` se especifica, se priorizan nombres de tabla que la
+    incluyan para soportar bases con particiones por dispositivo
+    (``gteri_<modelo>_<imei>`` o ``gtinf_<modelo>_<imei>``). Si no se
+    encuentra coincidencia exacta, se mantiene la heurística previa basada en
+    ``reporte`` y ``modelo`` solamente.
+    """
 
     cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     names = [row[0] for row in cursor.fetchall()]
@@ -190,7 +197,22 @@ def detect_table(conn, report: str, model: str) -> str:
         raise ValueError("La base de datos no tiene tablas")
     model_lower = model.lower()
     report_lower = report.lower()
-    candidates = [
+    imei_candidates: list[str] = []
+    if imei:
+        imei_text = "".join(ch for ch in str(imei).strip() if ch.isalnum())
+        if imei_text:
+            imei_candidates = [
+                f"{report_lower}_{model_lower}_{imei_text}",
+                f"{report_lower}_{model}_{imei_text}",
+                f"{report}_{model_lower}_{imei_text}",
+                f"{report}_{model}_{imei_text}",
+                f"{model_lower}_{report_lower}_{imei_text}",
+                f"{model}_{report}_{imei_text}",
+                f"{report_lower}_{imei_text}",
+                f"{report}_{imei_text}",
+            ]
+
+    candidates = imei_candidates + [
         f"{report_lower}_{model_lower}",
         f"{report_lower}_{model}",
         f"{report}_{model_lower}",
