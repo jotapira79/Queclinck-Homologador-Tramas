@@ -10,6 +10,7 @@ from viz.mapa_recorridos import (
     InfoRecord,
     LocationPoint,
     _associate_info,
+    _build_interactive_payload,
     _filter_points,
     _normalize_operator,
     _safe_int,
@@ -194,6 +195,36 @@ def test_filter_points_returns_empty_when_combination_not_found():
         operators=["Entel"],
         networks=["4G"],
     ) == []
+
+
+def test_build_interactive_payload_groups_summary_by_day():
+    points = [
+        _make_point(0, operator="Claro", network="2G"),
+        _make_point(60, operator="Entel", network="3G"),
+        _make_point(86400, operator="Claro", network="4G"),
+    ]
+
+    (
+        _points_payload,
+        days,
+        operators,
+        networks,
+        day_summary,
+        initial_day,
+    ) = _build_interactive_payload(points)
+
+    assert days == ["2025-10-10", "2025-10-11"]
+    assert operators == ["Claro", "Entel"]
+    assert networks == ["2G", "3G", "4G"]
+    assert day_summary["2025-10-10"] == {
+        "operators": ["Claro", "Entel"],
+        "networks": ["2G", "3G"],
+    }
+    assert day_summary["2025-10-11"] == {
+        "operators": ["Claro"],
+        "networks": ["4G"],
+    }
+    assert initial_day == "2025-10-10"
 
 
 def test_enriched_database_creates_columns_and_values(tmp_path: Path):

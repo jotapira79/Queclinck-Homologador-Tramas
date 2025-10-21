@@ -460,6 +460,64 @@ def _filter_points(
 # Render del mapa ------------------------------------------------------------
 
 
+def _build_interactive_payload(
+    points: List[LocationPoint],
+) -> Tuple[
+    List[dict],
+    List[str],
+    List[str],
+    List[str],
+    Dict[str, Dict[str, List[str]]],
+    str,
+]:
+    """Prepara datos serializables para el panel interactivo."""
+
+    points_sorted = sorted(points, key=lambda p: p.send_time)
+    days = sorted({p.send_time.date().isoformat() for p in points_sorted})
+    operators = sorted({(p.operator or "Desconocido") for p in points_sorted})
+    networks = sorted({(p.network_label or "Desconocida") for p in points_sorted})
+
+    points_payload: List[dict] = []
+    summary: Dict[str, Dict[str, set[str]]] = {}
+    for point in points_sorted:
+        day = point.send_time.date().isoformat()
+        operator = point.operator or "Desconocido"
+        network = point.network_label or "Desconocida"
+        points_payload.append(
+            {
+                "lat": point.lat,
+                "lon": point.lon,
+                "day": day,
+                "operator": operator,
+                "network": network,
+                "tooltip": _point_to_tooltip(point),
+                "timestamp": point.send_time.isoformat(),
+            }
+        )
+
+        bucket = summary.setdefault(day, {"operators": set(), "networks": set()})
+        bucket["operators"].add(operator)
+        bucket["networks"].add(network)
+
+    summary_serializable: Dict[str, Dict[str, List[str]]] = {}
+    for day, values in summary.items():
+        summary_serializable[day] = {
+            "operators": sorted(values["operators"]),
+            "networks": sorted(values["networks"]),
+        }
+
+    initial_day = days[0] if days else "Todos"
+
+    return (
+        points_payload,
+        days,
+        operators,
+        networks,
+        summary_serializable,
+        initial_day,
+    )
+
+
 def _ensure_output_path(path: Path) -> None:
     if not path.parent.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -526,6 +584,7 @@ class FilterPanel(MacroElement):
         network_options: List[str],
         operator_colors: Dict[str, str],
         initial_day: str,
+        day_summary: Dict[str, Dict[str, List[str]]],
     ) -> None:
         if Template is None:  # pragma: no cover - dependencia opcional
             raise RuntimeError(
@@ -535,6 +594,7 @@ class FilterPanel(MacroElement):
         self._name = "FilterPanel"
         self.points_json = json.dumps(points_data, ensure_ascii=False)
         self.operator_colors_json = json.dumps(operator_colors, ensure_ascii=False)
+        self.day_summary_json = json.dumps(day_summary, ensure_ascii=False)
         self.day_options = day_options
         self.operator_options = operator_options
         self.network_options = network_options
@@ -576,6 +636,7 @@ class FilterPanel(MacroElement):
             (function() {
                 var mapObj = {{ this._parent.get_name() }};
                 var pointsData = {{ this.points_json | safe }};
+                var daySummary = {{ this.day_summary_json | safe }};
                 var operatorColors = {{ this.operator_colors_json | safe }};
                 var panelId = "{{ this.get_name() }}";
                 var daySelect = document.getElementById(panelId + "_day");
@@ -585,6 +646,19 @@ class FilterPanel(MacroElement):
                 var routeLayer = L.layerGroup().addTo(mapObj);
                 var lastSelectedDay = null;
                 var ALL_KEYWORDS = { "todos": true, "todas": true, "all": true };
+
+                var dayIndex = (function() {
+                    var index = {};
+                    for (var i = 0; i < pointsData.length; i += 1) {
+                        var point = pointsData[i];
+                        var key = point.day;
+                        if (!index.hasOwnProperty(key)) {
+                            index[key] = [];
+                        }
+                        index[key].push(point);
+                    }
+                    return index;
+                })();
 
                 function isAllValue(value) {
                     if (value === undefined || value === null) {
@@ -627,24 +701,6 @@ class FilterPanel(MacroElement):
                     return chosen;
                 }
 
-                function collectUnique(points, key) {
-                    var seen = {};
-                    for (var i = 0; i < points.length; i += 1) {
-                        var value = points[i][key];
-                        if (value && !seen.hasOwnProperty(value)) {
-                            seen[value] = true;
-                        }
-                    }
-                    var values = [];
-                    for (var candidate in seen) {
-                        if (seen.hasOwnProperty(candidate)) {
-                            values.push(candidate);
-                        }
-                    }
-                    values.sort();
-                    return values;
-                }
-
                 function populateSelect(selectElement, values, preserveSelection) {
                     var previousValue = preserveSelection ? selectElement.value : "Todos";
                     if (!previousValue || isAllValue(previousValue)) {
@@ -668,21 +724,19 @@ class FilterPanel(MacroElement):
                     }
                 }
 
-                function pointsForDay(dayValue) {
-                    var dayPoints = [];
-                    for (var i = 0; i < pointsData.length; i += 1) {
-                        var point = pointsData[i];
-                        if (point.day === dayValue) {
-                            dayPoints.push(point);
-                        }
-                    }
-                    return dayPoints;
-                }
-
                 function updateFilters() {
                     var selectedDay = daySelect.value;
                     var dayActive = selectedDay && !isAllValue(selectedDay);
-                    var basePoints = dayActive ? pointsForDay(selectedDay) : pointsData.slice();
+                    var basePoints;
+                    if (dayActive) {
+                        if (dayIndex.hasOwnProperty(selectedDay)) {
+                            basePoints = dayIndex[selectedDay].slice();
+                        } else {
+                            basePoints = [];
+                        }
+                    } else {
+                        basePoints = pointsData.slice();
+                    }
                     var filtered = [];
 
                     if (!dayActive) {
@@ -693,10 +747,13 @@ class FilterPanel(MacroElement):
                         lastSelectedDay = null;
                     } else {
                         var preserve = selectedDay === lastSelectedDay;
-                        populateSelect(operatorSelect, collectUnique(basePoints, "operator"), preserve);
-                        populateSelect(networkSelect, collectUnique(basePoints, "network"), preserve);
-                        operatorSelect.disabled = false;
-                        networkSelect.disabled = false;
+                        var summary = daySummary.hasOwnProperty(selectedDay)
+                            ? daySummary[selectedDay]
+                            : { operators: [], networks: [] };
+                        populateSelect(operatorSelect, summary.operators || [], preserve);
+                        populateSelect(networkSelect, summary.networks || [], preserve);
+                        operatorSelect.disabled = (summary.operators || []).length === 0;
+                        networkSelect.disabled = (summary.networks || []).length === 0;
                         lastSelectedDay = selectedDay;
                     }
 
@@ -792,24 +849,14 @@ def render_interactive_map(
     center_lat = points_sorted[0].lat
     center_lon = points_sorted[0].lon
     fmap = Map(location=(center_lat, center_lon), zoom_start=13, tiles=tiles)
-    days = sorted({p.send_time.date().isoformat() for p in points_sorted})
-    operators = sorted({(p.operator or "Desconocido") for p in points_sorted})
-    networks = sorted({(p.network_label or "Desconocida") for p in points_sorted})
-
-    points_payload = [
-        {
-            "lat": point.lat,
-            "lon": point.lon,
-            "day": point.send_time.date().isoformat(),
-            "operator": point.operator or "Desconocido",
-            "network": point.network_label or "Desconocida",
-            "tooltip": _point_to_tooltip(point),
-            "timestamp": point.send_time.isoformat(),
-        }
-        for point in points_sorted
-    ]
-
-    initial_day = days[0] if days else "Todos"
+    (
+        points_payload,
+        days,
+        operators,
+        networks,
+        day_summary,
+        initial_day,
+    ) = _build_interactive_payload(points_sorted)
 
     fmap.get_root().add_child(
         FilterPanel(
@@ -819,6 +866,7 @@ def render_interactive_map(
             network_options=networks,
             operator_colors=OPERATOR_COLORS,
             initial_day=initial_day,
+            day_summary=day_summary,
         )
     )
 
