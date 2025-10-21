@@ -265,6 +265,86 @@ def test_build_points_accepts_whitespace_imei(tmp_path: Path):
     assert points[0].lon == pytest.approx(-70.66)
 
 
+def test_build_points_accepts_lng_column(tmp_path: Path):
+    base_dir = tmp_path
+    model = "gv310lau"
+    imei = "868589060824888"
+
+    gteri_path = base_dir / f"gteri_{model}.db"
+    conn = sqlite3.connect(gteri_path)
+    conn.execute(
+        f"""
+        CREATE TABLE "gteri_{model}" (
+            imei TEXT,
+            send_time TEXT,
+            latitude REAL,
+            lng REAL,
+            mnc TEXT
+        )
+        """
+    )
+    conn.execute(
+        f'INSERT INTO "gteri_{model}" (imei, send_time, latitude, lng, mnc) '
+        'VALUES (?, ?, ?, ?, ?)',
+        (imei, "202401020304", -33.45, -70.66, "0002"),
+    )
+    conn.commit()
+    conn.close()
+
+    points = build_points(
+        model=model,
+        imei=imei,
+        base_dir=base_dir,
+        reports=["gteri"],
+    )
+
+    assert len(points) == 1
+    point = points[0]
+    assert point.lat == pytest.approx(-33.45)
+    assert point.lon == pytest.approx(-70.66)
+    assert point.operator == "Movistar"
+
+
+def test_build_points_accepts_latitude_decimal_column(tmp_path: Path):
+    base_dir = tmp_path
+    model = "gv310lau"
+    imei = "868589060824888"
+
+    gteri_path = base_dir / f"gteri_{model}.db"
+    conn = sqlite3.connect(gteri_path)
+    conn.execute(
+        f"""
+        CREATE TABLE "gteri_{model}" (
+            imei TEXT,
+            send_time TEXT,
+            latitude_decimal REAL,
+            longitude_decimal REAL,
+            mnc TEXT
+        )
+        """
+    )
+    conn.execute(
+        f'INSERT INTO "gteri_{model}" (imei, send_time, latitude_decimal, longitude_decimal, mnc) '
+        'VALUES (?, ?, ?, ?, ?)',
+        (imei, "202401020304", -33.45, -70.66, "0002"),
+    )
+    conn.commit()
+    conn.close()
+
+    points = build_points(
+        model=model,
+        imei=imei,
+        base_dir=base_dir,
+        reports=["gteri"],
+    )
+
+    assert len(points) == 1
+    point = points[0]
+    assert point.lat == pytest.approx(-33.45)
+    assert point.lon == pytest.approx(-70.66)
+    assert point.operator == "Movistar"
+
+
 def test_build_points_swaps_coordinates_without_mcc(tmp_path: Path):
     model = "gv350ceu"
     imei = "987654321098765"

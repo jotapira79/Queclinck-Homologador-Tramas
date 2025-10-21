@@ -19,6 +19,9 @@ LAT_CANDIDATES = [
     "latitude_deg",
     "lat_decimal",
     "lat_deg",
+    "latitude_decimal",
+    "latitude_degrees",
+    "lat_degrees",
 ]
 LON_CANDIDATES = [
     "lon",
@@ -26,6 +29,12 @@ LON_CANDIDATES = [
     "longitude_deg",
     "lon_decimal",
     "lon_deg",
+    "longitude_decimal",
+    "longitude_degrees",
+    "lon_degrees",
+    "lng",
+    "lng_decimal",
+    "lng_deg",
 ]
 TIME_CANDIDATES = ["send_time", "gnss_utc_time", "timestamp", "created_at"]
 MCC_CANDIDATES = ["mcc", "mobile_country_code"]
