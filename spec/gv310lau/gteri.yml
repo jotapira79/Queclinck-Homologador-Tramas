@@ -10,6 +10,11 @@ config:
   # Modo de interpretación del bit 3 de position_append_mask: "pdop" o "accuracy_factor"
   # Desde v9.00 se documenta "GNSS accuracy factor" como opción.
   posmask_bit3_mode: "pdop"
+  # Algunos firmwares envían HDOP/VDOP/PDOP aun con los bits apagados.
+  tolerate_unmasked_position_fields:
+    - hdop
+    - vdop
+    - pdop
 
 version_field:
   name: full_protocol_version

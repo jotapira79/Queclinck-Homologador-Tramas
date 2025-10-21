@@ -369,7 +369,13 @@ def parse_line(
     result: dict[str, object] = {}
     for index, field in enumerate(spec.fields):
         remaining = spec.fields[index + 1 :]
-        value = _parse_field(field, stream, context, remaining_fields=remaining)
+        value = _parse_field(
+            field,
+            stream,
+            context,
+            remaining_fields=remaining,
+            config=spec.config,
+        )
         if value is not _SKIP:
             result[field.name] = value
 
@@ -383,15 +389,58 @@ def parse_line(
     return result
 
 
+def _should_force_parse(
+    field: FieldSpec,
+    stream: _TokenStream,
+    config: Optional[dict[str, object]],
+) -> bool:
+    if not config:
+        return False
+
+    tolerated_raw = config.get("tolerate_unmasked_position_fields")
+    if not tolerated_raw:
+        return False
+
+    if tolerated_raw is True:
+        tolerated = {"sats_in_use", "hdop", "vdop", "pdop"}
+    elif isinstance(tolerated_raw, str):
+        tolerated = {tolerated_raw}
+    elif isinstance(tolerated_raw, (set, tuple, list)):
+        tolerated = {str(item) for item in tolerated_raw}
+    else:
+        return False
+
+    name = getattr(field, "name", None)
+    if not name or name not in tolerated:
+        return False
+
+    token = stream.peek()
+    if token in (None, ""):
+        return False
+
+    text = str(token).strip()
+    if not text:
+        return False
+
+    if name == "sats_in_use":
+        pattern = r"\d{1,2}"
+    else:
+        pattern = r"-?\d+(?:\.\d+)?"
+
+    return re.fullmatch(pattern, text) is not None
+
+
 def _parse_field(
     field: FieldSpec,
     stream: _TokenStream,
     context: _ParseContext,
     *,
     remaining_fields: Sequence[FieldSpec] = (),
+    config: Optional[dict[str, object]] = None,
 ):
     if not _should_parse(field, context):
-        return _SKIP
+        if not _should_force_parse(field, stream, config):
+            return _SKIP
 
     required_tokens = _minimum_required_tokens(remaining_fields, context)
     if field.optional and stream.remaining() <= required_tokens:
@@ -404,7 +453,7 @@ def _parse_field(
         count = _repeat_count(field, context)
         if (count is None or count <= 0) and field.optional:
             return _SKIP
-        return _parse_group(field, stream, context, count=count)
+        return _parse_group(field, stream, context, count=count, config=config)
 
     if stream.remaining() <= 0:
         if field.optional:
@@ -446,6 +495,7 @@ def _parse_group(
     context: _ParseContext,
     *,
     count: Optional[int] = None,
+    config: Optional[dict[str, object]] = None,
 ):
     if count is None:
         count = _repeat_count(field, context)
@@ -462,6 +512,7 @@ def _parse_group(
                 stream,
                 child_context,
                 remaining_fields=nested_remaining,
+                config=config,
             )
             if value is not _SKIP:
                 item[nested.name] = value
