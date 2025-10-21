@@ -178,6 +178,63 @@ def _register_sqlite_helpers(conn: sqlite3.Connection) -> None:
 
 # Lectura de datos -----------------------------------------------------------
 
+
+def _extract_digits(text: str) -> str:
+    return "".join(ch for ch in text if ch.isdigit())
+
+
+def _datetime_from_numeric_fragment(
+    digits: str, reference: Optional[datetime] = None
+) -> Optional[datetime]:
+    if not digits:
+        return None
+    if len(digits) == 14:
+        return _parse_datetime(digits)
+    if 8 <= len(digits) < 14:
+        normalized = digits.ljust(14, "0")
+        return _parse_datetime(normalized)
+    if len(digits) <= 6:
+        padded = digits.zfill(6)
+        try:
+            time_value = datetime.strptime(padded, "%H%M%S").time()
+        except ValueError:
+            return None
+        base = reference.date() if reference else datetime(1970, 1, 1).date()
+        return datetime.combine(base, time_value)
+    return None
+
+
+def _resolve_datetime(row: sqlite3.Row, primary_col: str) -> Optional[datetime]:
+    raw_value = row[primary_col]
+    dt = _parse_datetime(raw_value)
+    if dt is not None:
+        return dt
+
+    text = ""
+    if raw_value not in (None, ""):
+        text = str(raw_value).strip()
+    digits = _extract_digits(text)
+
+    fallback_dt: Optional[datetime] = None
+    for candidate in TIME_CANDIDATES:
+        if candidate == primary_col or candidate not in row.keys():
+            continue
+        candidate_dt = _parse_datetime(row[candidate])
+        if candidate_dt is None:
+            continue
+        if not digits:
+            return candidate_dt
+        if fallback_dt is None:
+            fallback_dt = candidate_dt
+
+    if digits:
+        normalized_dt = _datetime_from_numeric_fragment(digits, fallback_dt)
+        if normalized_dt is not None:
+            return normalized_dt
+
+    return fallback_dt
+
+
 def _load_locations_from_db(
     db_path: Path,
     report: str,
@@ -217,6 +274,9 @@ def _load_locations_from_db(
         operator_col = "operador" if "operador" in columns else None
 
         query_cols = {lat_col, lon_col, time_col, imei_col}
+        for candidate in TIME_CANDIDATES:
+            if candidate in columns:
+                query_cols.add(candidate)
         if mcc_col:
             query_cols.add(mcc_col)
         if mnc_col:
@@ -247,7 +307,7 @@ def _load_locations_from_db(
         for row in conn.execute(sql, (normalized_imei,)):
             raw_lat = _safe_float(row[lat_col])
             raw_lon = _safe_float(row[lon_col])
-            dt = _parse_datetime(row[time_col])
+            dt = _resolve_datetime(row, time_col)
             if raw_lat is None or raw_lon is None or dt is None:
                 continue
             mcc = _safe_int(row[mcc_col]) if mcc_col else None
@@ -327,6 +387,9 @@ def _load_gtinf_records(db_path: Path, model: str, imei: str) -> List[InfoRecord
     ber_col = _first_existing(CSQ_BER_CANDIDATES, columns)
 
     query_cols = {imei_col, time_col, network_col}
+    for candidate in TIME_CANDIDATES:
+        if candidate in columns:
+            query_cols.add(candidate)
     if csq_col:
         query_cols.add(csq_col)
     if ber_col:
@@ -342,7 +405,7 @@ def _load_gtinf_records(db_path: Path, model: str, imei: str) -> List[InfoRecord
     normalized_imei = _normalized_imei_value(imei)
     info_records: List[InfoRecord] = []
     for row in conn.execute(sql, (normalized_imei,)):
-        dt = _parse_datetime(row[time_col])
+        dt = _resolve_datetime(row, time_col)
         if dt is None:
             continue
         raw_network = _safe_int(row[network_col])
