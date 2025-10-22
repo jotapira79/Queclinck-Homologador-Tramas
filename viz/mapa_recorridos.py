@@ -640,8 +640,10 @@ class FilterPanel(MacroElement):
             )
         super().__init__()
         self._name = "FilterPanel"
-        self.points_json = json.dumps(points_data, ensure_ascii=False)
-        self.operator_colors_json = json.dumps(operator_colors, ensure_ascii=False)
+        # Guardamos las estructuras Python originales para que Jinja
+        # se encargue de serializarlas correctamente mediante ``tojson``.
+        self.points_payload = points_data
+        self.operator_colors_payload = operator_colors
         self.day_options = day_options
         self.report_options = report_options
         self.operator_options = operator_options
@@ -722,11 +724,10 @@ class FilterPanel(MacroElement):
                 var mapObj = window[mapKey];
 
                 // ------------------ datos y estado ------------------
-                // OJO: this.points_json ya viene serializado desde Python.
-                // Usamos tojson para inyectar JSON válido sin quotes extra.
+                // Jinja serializa ``points_payload`` a JSON válido.
                 var pointsData;
                 try {
-                  pointsData = {{ this.points_json | tojson }};
+                  pointsData = {{ this.points_payload | tojson }};
                   if (!Array.isArray(pointsData)) { pointsData = []; }
                   console.debug("[FilterPanel] total points:", pointsData.length);
                 } catch (e){
@@ -748,7 +749,7 @@ class FilterPanel(MacroElement):
                 var layerGroup = L.layerGroup().addTo(mapObj);
 
                 function _colorForOperator(op){
-                  var table = {{ this.operator_colors_json | tojson }};
+                  var table = {{ this.operator_colors_payload | tojson }};
                   return table[op] || "#7f7f7f";
                 }
 
