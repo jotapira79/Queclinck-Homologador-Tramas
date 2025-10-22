@@ -689,7 +689,6 @@ class FilterPanel(MacroElement):
             {% endmacro %}
 
             {% macro script(this, kwargs) %}
-            <script>
             (function(){
               // ------------------ utilidades para esperar Folium ------------------
               function _findFoliumMapKey(){
@@ -715,6 +714,10 @@ class FilterPanel(MacroElement):
               function _boot(){
                 console.debug("[FilterPanel] boot");
 
+                if (document.querySelector('script[src^="data:application/json;base64"]')) {
+                  console.error("[FilterPanel] Detectado <script src=\"data:application/json;base64,…\"> en el HTML. Esto no lo genera esta versión del código.");
+                }
+
                 var figKey = _findFoliumFigureKey();
                 var mapKey = _findFoliumMapKey();
                 if (!figKey || !mapKey){
@@ -725,7 +728,7 @@ class FilterPanel(MacroElement):
 
                 // ------------------ datos y estado ------------------
                 // Jinja serializa ``points_payload`` a JSON válido.
-                var pointsData;
+                let pointsData;
                 try {
                   pointsData = {{ this.points_payload | tojson }};
                   if (!Array.isArray(pointsData)) { pointsData = []; }
@@ -768,6 +771,7 @@ class FilterPanel(MacroElement):
                     if (report === "ambos" || report === "all") return true;
                     return (p.report || "").toLowerCase() === report;
                   });
+                  console.debug("[FilterPanel] after report:", byType.length);
 
                   // 3) Operador
                   var op = ($operator.value || "All").toLowerCase();
@@ -775,6 +779,7 @@ class FilterPanel(MacroElement):
                     if (op === "all" || op === "todos") return true;
                     return (p.operator || "Desconocido").toLowerCase() === op;
                   });
+                  console.debug("[FilterPanel] after operator:", byOp.length);
 
                   // 4) Tecnología
                   var net = ($network.value || "All").toLowerCase();
@@ -782,6 +787,7 @@ class FilterPanel(MacroElement):
                     if (net === "all" || net === "todos") return true;
                     return (p.network || p.network_label || "Desconocida").toLowerCase() === net;
                   });
+                  console.debug("[FilterPanel] after tech:", final.length);
 
                   console.debug("[FilterPanel] final filtered:", final.length);
 
@@ -836,7 +842,6 @@ class FilterPanel(MacroElement):
                 _boot();
               }
             })();
-            </script>
             {% endmacro %}
 
             """
