@@ -392,3 +392,20 @@ def test_build_points_reads_existing_map_db(tmp_path: Path):
     assert kinds == {"BUFFER", "RESP"}
     assert {point.operator for point in points} == {"Claro", "Movistar"}
     assert {point.network_label for point in points} == {"4G", "3G"}
+
+
+def test_points_have_valid_lat_lon(tmp_path: Path):
+    base_dir, model, imei = _prepare_map_databases(tmp_path)
+
+    ensure_enriched_database(report="gteri", model=model, base_dir=base_dir)
+
+    points = build_points(
+        model=model,
+        imei=imei,
+        base_dir=base_dir,
+        reports=["gteri"],
+    )
+
+    for point in points:
+        assert -90 <= point.lat <= 90
+        assert -180 <= point.lon <= 180
