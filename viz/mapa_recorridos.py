@@ -699,6 +699,7 @@ class FilterPanel(MacroElement):
                 }
                 return null;
               }
+
               function _findFoliumFigureKey() {
                 for (var k in window) {
                   if (Object.prototype.hasOwnProperty.call(window, k) &&
@@ -713,15 +714,156 @@ class FilterPanel(MacroElement):
                 var figKey = _findFoliumFigureKey();
                 var mapKey = _findFoliumMapKey();
                 if (!figKey || !mapKey) return setTimeout(_initFilterPanel, 50);
-                var figureObj = window[figKey];
                 var mapObj = window[mapKey];
 
                 // Datos inyectados desde Python:
                 const pointsData = {{ this.points_json | safe }};
                 const operatorColors = {{ this.operator_colors_json | safe }};
 
-                // ... tu lógica existente de filtros y pintado,
-                // usando 'mapObj' SIEMPRE (no map_XXXX literal)
+                // Referencias a selects del panel de filtros
+                const selDay = document.getElementById("{{ this.get_name() }}_day");
+                const selReport = document.getElementById("{{ this.get_name() }}_report");
+                const selOp = document.getElementById("{{ this.get_name() }}_operator");
+                const selNet = document.getElementById("{{ this.get_name() }}_network");
+
+                if (!selDay || !selReport || !selOp || !selNet) {
+                  console.warn("[FilterPanel] No se encontraron los elementos select esperados");
+                  return;
+                }
+
+                // Capa de trabajo que se repinta con cada cambio de filtros
+                const layer = L.layerGroup().addTo(mapObj);
+
+                function isAll(value) {
+                  if (value == null) return true;
+                  const normalized = String(value).trim().toLowerCase();
+                  return normalized === "all" || normalized === "todos" || normalized === "ambos";
+                }
+
+                function repopulateDependent(dayValue) {
+                  const base = isAll(dayValue)
+                    ? pointsData
+                    : pointsData.filter(function(point) { return point.day === dayValue; });
+
+                  const operators = Array.from(new Set(
+                    base.map(function(point) { return point.operator; }).filter(Boolean)
+                  )).sort();
+                  const networks = Array.from(new Set(
+                    base.map(function(point) { return point.network; }).filter(Boolean)
+                  )).sort();
+
+                  function resetSelect(selectEl) {
+                    if (!selectEl || !selectEl.options.length) return;
+                    const first = selectEl.options[0];
+                    selectEl.innerHTML = "";
+                    selectEl.appendChild(first);
+                  }
+
+                  const previousOp = selOp.value;
+                  const previousNet = selNet.value;
+
+                  resetSelect(selOp);
+                  resetSelect(selNet);
+
+                  operators.forEach(function(operator) {
+                    selOp.appendChild(new Option(operator, operator));
+                  });
+                  networks.forEach(function(network) {
+                    selNet.appendChild(new Option(network, network));
+                  });
+
+                  // Intentar conservar la selección previa si sigue disponible
+                  if (previousOp && selOp.querySelector('option[value="' + previousOp + '"]')) {
+                    selOp.value = previousOp;
+                  }
+                  if (previousNet && selNet.querySelector('option[value="' + previousNet + '"]')) {
+                    selNet.value = previousNet;
+                  }
+                }
+
+                function applyFilters() {
+                  const dayValue = selDay.value;
+                  const reportValue = selReport.value;
+                  const operatorValue = selOp.value;
+                  const networkValue = selNet.value;
+
+                  let filtered = pointsData.slice();
+                  console.debug("[FilterPanel] total registros:", filtered.length);
+
+                  if (!isAll(dayValue)) {
+                    filtered = filtered.filter(function(point) {
+                      return point.day === dayValue;
+                    });
+                  }
+                  console.debug("[FilterPanel] tras día:", filtered.length);
+
+                  if (!isAll(reportValue)) {
+                    const reportNorm = String(reportValue).trim().toUpperCase();
+                    filtered = filtered.filter(function(point) {
+                      const value = point.report || "RESP";
+                      return String(value).trim().toUpperCase() === reportNorm;
+                    });
+                  }
+                  console.debug("[FilterPanel] tras tipo:", filtered.length);
+
+                  if (!isAll(operatorValue)) {
+                    const operatorNorm = String(operatorValue).trim().toLowerCase();
+                    filtered = filtered.filter(function(point) {
+                      const value = point.operator || "Desconocido";
+                      return String(value).trim().toLowerCase() === operatorNorm;
+                    });
+                  }
+
+                  if (!isAll(networkValue)) {
+                    const networkNorm = String(networkValue).trim().toLowerCase();
+                    filtered = filtered.filter(function(point) {
+                      const value = point.network || "Desconocida";
+                      return String(value).trim().toLowerCase() === networkNorm;
+                    });
+                  }
+                  console.debug("[FilterPanel] final filtrado:", filtered.length);
+
+                  layer.clearLayers();
+
+                  if (!filtered.length) {
+                    return;
+                  }
+
+                  const latlngs = [];
+                  filtered.forEach(function(point) {
+                    const latlng = [point.lat, point.lon];
+                    latlngs.push(latlng);
+
+                    const operatorColor = operatorColors[point.operator] || "#7f7f7f";
+                    const marker = L.circleMarker(latlng, {
+                      radius: 4,
+                      color: operatorColor,
+                      weight: 2,
+                      fillOpacity: 0.7
+                    });
+                    if (point.tooltip) {
+                      marker.bindTooltip(point.tooltip);
+                    }
+                    marker.addTo(layer);
+                  });
+
+                  if (latlngs.length === 1) {
+                    mapObj.setView(latlngs[0], 13);
+                  } else {
+                    mapObj.fitBounds(latlngs, { padding: [24, 24] });
+                  }
+                }
+
+                selDay.addEventListener("change", function() {
+                  repopulateDependent(selDay.value);
+                  applyFilters();
+                });
+                selReport.addEventListener("change", applyFilters);
+                selOp.addEventListener("change", applyFilters);
+                selNet.addEventListener("change", applyFilters);
+
+                repopulateDependent(selDay.value);
+                applyFilters();
               }
 
               if (document.readyState === "loading") {
