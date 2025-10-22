@@ -718,8 +718,8 @@ class FilterPanel(MacroElement):
                 if (!figKey || !mapKey) return setTimeout(_initFilterPanel, 50);
                 var mapObj = window[mapKey];
 
-                // Datos inyectados desde Python:
-                const pointsData = JSON.parse({{ this.points_json | tojson }});
+                // Datos inyectados desde Python (ya es JSON válido):
+                const pointsData = {{ this.points_json | safe }};
                 const operatorColors = {{ this.operator_colors_json | safe }};
 
                 // Referencias a selects del panel de filtros
