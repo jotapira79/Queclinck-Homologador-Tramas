@@ -169,6 +169,12 @@ def _swap_coordinates_if_needed(
     candidate_lat, candidate_lon = lon, lat
     swap_valid = _valid_coordinates(candidate_lat, candidate_lon)
 
+    if swap_valid:
+        if abs(lat) > 90.0 or abs(lon) > 180.0:
+            return candidate_lat, candidate_lon
+        if abs(lat) > abs(lon):
+            return candidate_lat, candidate_lon
+
     if abs(lat) > 90.0 and abs(lon) <= 90.0 and swap_valid:
         return candidate_lat, candidate_lon
 
@@ -316,19 +322,37 @@ def _load_locations_from_db(
 
         points: List[LocationPoint] = []
         for row in rows:
-            lat = _safe_float(row["lat"])
-            lon = _safe_float(row["lon"])
+            raw_payload = dict(row)
+
+            lat_value = raw_payload.get("latitude")
+            if lat_value is None:
+                lat_value = raw_payload.get("lat")
+            lon_value = raw_payload.get("longitude")
+            if lon_value is None:
+                lon_value = raw_payload.get("lon")
+
+            if lat_value is None or lon_value is None:
+                raise ValueError(f"Fila sin lat/lon: {raw_payload}")
+
+            lat = _safe_float(lat_value)
+            lon = _safe_float(lon_value)
             send_dt = _parse_send_time(row["send_time"])
             if lat is None or lon is None or send_dt is None:
                 continue
+
+            lat = float(lat)
+            lon = float(lon)
+
+            if abs(lat) > 90.0 or abs(lon) > 180.0 or abs(lat) > abs(lon):
+                lat, lon = lon, lat
+
             # Corrige lat/lon intercambiadas cuando aplique
-            lat, lon = _swap_coordinates_if_needed(float(lat), float(lon), None)
+            lat, lon = _swap_coordinates_if_needed(lat, lon, None)
             if not _valid_coordinates(lat, lon):
                 continue
             operator_value = _normalize_text(row["operador"]).strip() or "Desconocido"
             network_label = _normalize_text(row["tecnologia_celular"]) or "Desconocida"
             signal_quality = _normalize_text(row["calidad_senal"]) or "Desconocida"
-            raw_payload = dict(row)
             points.append(
                 LocationPoint(
                     lat=float(lat),
@@ -810,7 +834,7 @@ def render_interactive_map(
     )
 
     fmap.get_root().add_child(OperatorLegend(OPERATOR_COLORS))
-    fmap.fit_bounds([(p.lat, p.lon) for p in points_sorted])
+    fmap.fit_bounds([[p.lat, p.lon] for p in points_sorted])
 
     _ensure_output_path(output_html)
     fmap.save(str(output_html))
