@@ -687,198 +687,155 @@ class FilterPanel(MacroElement):
             {% endmacro %}
 
             {% macro script(this, kwargs) %}
+            <script>
             (function(){
-              console.log("[FilterPanel] boot");
-
-              // --- utilidades para resolver map_/figure_ creados por Folium ---
-              function _findFoliumMapKey() {
-                for (var k in window) {
-                  if (Object.prototype.hasOwnProperty.call(window, k) &&
+              // ------------------ utilidades para esperar Folium ------------------
+              function _findFoliumMapKey(){
+                for (var k in window){
+                  if (Object.prototype.hasOwnProperty.call(window,k) &&
                       /^map_[a-f0-9]+$/i.test(k) &&
-                      window[k] && typeof window[k].fitBounds === "function") {
+                      window[k] && typeof window[k].fitBounds === "function"){
+                    return k;
+                  }
+                }
+                return null;
+              }
+              function _findFoliumFigureKey(){
+                for (var k in window){
+                  if (Object.prototype.hasOwnProperty.call(window,k) &&
+                      /^figure_[a-f0-9]+$/i.test(k) && window[k]){
                     return k;
                   }
                 }
                 return null;
               }
 
-              function _findFoliumFigureKey() {
-                for (var k in window) {
-                  if (Object.prototype.hasOwnProperty.call(window, k) &&
-                      /^figure_[a-f0-9]+$/i.test(k) && window[k]) {
-                    return k;
-                  }
-                }
-                return null;
-              }
+              function _boot(){
+                console.debug("[FilterPanel] boot");
 
-              function _initFilterPanel() {
                 var figKey = _findFoliumFigureKey();
                 var mapKey = _findFoliumMapKey();
-                if (!figKey || !mapKey) return setTimeout(_initFilterPanel, 50);
+                if (!figKey || !mapKey){
+                  // Folium todavía no definió los objetos → reintenta pronto
+                  return setTimeout(_boot, 40);
+                }
                 var mapObj = window[mapKey];
 
-                // Datos inyectados desde Python (ya es JSON válido):
-                const pointsData = {{ this.points_json | safe }};
-                const operatorColors = {{ this.operator_colors_json | safe }};
-
-                // Referencias a selects del panel de filtros
-                const selDay = document.getElementById("{{ this.get_name() }}_day");
-                const selReport = document.getElementById("{{ this.get_name() }}_report");
-                const selOp = document.getElementById("{{ this.get_name() }}_operator");
-                const selNet = document.getElementById("{{ this.get_name() }}_network");
-
-                if (!selDay || !selReport || !selOp || !selNet) {
-                  console.warn("[FilterPanel] No se encontraron los elementos select esperados");
-                  return;
+                // ------------------ datos y estado ------------------
+                // OJO: this.points_json ya viene serializado desde Python.
+                // Usamos tojson para inyectar JSON válido sin quotes extra.
+                var pointsData;
+                try {
+                  pointsData = {{ this.points_json | tojson }};
+                  if (!Array.isArray(pointsData)) { pointsData = []; }
+                  console.debug("[FilterPanel] total points:", pointsData.length);
+                } catch (e){
+                  console.error("[FilterPanel] error parsing points:", e);
+                  pointsData = [];
                 }
 
-                // Capa de trabajo que se repinta con cada cambio de filtros
-                const layer = L.layerGroup().addTo(mapObj);
+                // Exponer a window para depuración desde la consola
+                window.__pointsData = pointsData;
 
-                function isAll(value) {
-                  if (value == null) return true;
-                  const normalized = String(value).trim().toLowerCase();
-                  return normalized === "all" || normalized === "todos" || normalized === "ambos";
+                // Opciones iniciales (ya renderizadas por el HTML/Jinja)
+                var $panel = document.querySelector('[data-filter-panel="interactive-filters"]');
+                var $day      = $panel.querySelector('#{{ this.get_name() }}_day');
+                var $report   = $panel.querySelector('#{{ this.get_name() }}_report');
+                var $operator = $panel.querySelector('#{{ this.get_name() }}_operator');
+                var $network  = $panel.querySelector('#{{ this.get_name() }}_network');
+
+                // Capa contenedora para limpiar/repintar
+                var layerGroup = L.layerGroup().addTo(mapObj);
+
+                function _colorForOperator(op){
+                  var table = {{ this.operator_colors_json | tojson }};
+                  return table[op] || "#7f7f7f";
                 }
 
-                function repopulateDependent(dayValue) {
-                  const base = isAll(dayValue)
-                    ? pointsData
-                    : pointsData.filter(function(point) { return point.day === dayValue; });
-
-                  const operators = Array.from(new Set(
-                    base.map(function(point) { return point.operator; }).filter(Boolean)
-                  )).sort();
-                  const networks = Array.from(new Set(
-                    base.map(function(point) { return point.network; }).filter(Boolean)
-                  )).sort();
-
-                  function resetSelect(selectEl) {
-                    if (!selectEl || !selectEl.options.length) return;
-                    const first = selectEl.options[0];
-                    selectEl.innerHTML = "";
-                    selectEl.appendChild(first);
-                  }
-
-                  const previousOp = selOp.value;
-                  const previousNet = selNet.value;
-
-                  resetSelect(selOp);
-                  resetSelect(selNet);
-
-                  operators.forEach(function(operator) {
-                    selOp.appendChild(new Option(operator, operator));
+                function _applyFilters(){
+                  // 1) Día (prioritario)
+                  var day = ($day.value || "All").toLowerCase();
+                  var byDay = pointsData.filter(p => {
+                    if (day === "all" || day === "todos") return true;
+                    return (p.day || p.day_iso || "").toLowerCase() === day;
                   });
-                  networks.forEach(function(network) {
-                    selNet.appendChild(new Option(network, network));
+                  console.debug("[FilterPanel] after day:", byDay.length);
+
+                  // 2) Tipo de reporte
+                  var report = ($report.value || "AMBOS").toLowerCase();
+                  var byType = byDay.filter(p => {
+                    if (report === "ambos" || report === "all") return true;
+                    return (p.report || "").toLowerCase() === report;
                   });
 
-                  // Intentar conservar la selección previa si sigue disponible
-                  if (previousOp && selOp.querySelector('option[value="' + previousOp + '"]')) {
-                    selOp.value = previousOp;
-                  }
-                  if (previousNet && selNet.querySelector('option[value="' + previousNet + '"]')) {
-                    selNet.value = previousNet;
-                  }
-                }
-
-                function applyFilters() {
-                  const dayValue = selDay.value;
-                  const reportValue = selReport.value;
-                  const operatorValue = selOp.value;
-                  const networkValue = selNet.value;
-
-                  let filtered = pointsData.slice();
-                  console.log("[FilterPanel] total registros:", filtered.length);
-
-                  if (!isAll(dayValue)) {
-                    filtered = filtered.filter(function(point) {
-                      return point.day === dayValue;
-                    });
-                  }
-                  console.log("[FilterPanel] tras día:", filtered.length);
-
-                  if (!isAll(reportValue)) {
-                    const reportNorm = String(reportValue).trim().toUpperCase();
-                    filtered = filtered.filter(function(point) {
-                      const value = point.report || "RESP";
-                      return String(value).trim().toUpperCase() === reportNorm;
-                    });
-                  }
-                  console.log("[FilterPanel] tras tipo:", filtered.length);
-
-                  if (!isAll(operatorValue)) {
-                    const operatorNorm = String(operatorValue).trim().toLowerCase();
-                    filtered = filtered.filter(function(point) {
-                      const value = point.operator || "Desconocido";
-                      return String(value).trim().toLowerCase() === operatorNorm;
-                    });
-                  }
-
-                  if (!isAll(networkValue)) {
-                    const networkNorm = String(networkValue).trim().toLowerCase();
-                    filtered = filtered.filter(function(point) {
-                      const value = point.network || "Desconocida";
-                      return String(value).trim().toLowerCase() === networkNorm;
-                    });
-                  }
-                  console.log("[FilterPanel] final filtrado:", filtered.length);
-
-                  layer.clearLayers();
-
-                  if (!filtered.length) {
-                    return;
-                  }
-
-                  const latlngs = [];
-                  filtered.forEach(function(point) {
-                    const latlng = [point.lat, point.lon];
-                    latlngs.push(latlng);
-
-                    const operatorColor = operatorColors[point.operator] || "#7f7f7f";
-                    const marker = L.circleMarker(latlng, {
-                      radius: 4,
-                      color: operatorColor,
-                      weight: 2,
-                      fillOpacity: 0.7
-                    });
-                    if (point.tooltip) {
-                      marker.bindTooltip(point.tooltip);
-                    }
-                    marker.addTo(layer);
+                  // 3) Operador
+                  var op = ($operator.value || "All").toLowerCase();
+                  var byOp = byType.filter(p => {
+                    if (op === "all" || op === "todos") return true;
+                    return (p.operator || "Desconocido").toLowerCase() === op;
                   });
 
-                  if (latlngs.length === 1) {
+                  // 4) Tecnología
+                  var net = ($network.value || "All").toLowerCase();
+                  var final = byOp.filter(p => {
+                    if (net === "all" || net === "todos") return true;
+                    return (p.network || p.network_label || "Desconocida").toLowerCase() === net;
+                  });
+
+                  console.debug("[FilterPanel] final filtered:", final.length);
+
+                  // Repintado
+                  layerGroup.clearLayers();
+                  if (final.length === 0){
+                    return final;
+                  }
+
+                  // Markers y polilínea por operador (colores por operador)
+                  // Orden temporal
+                  final.sort((a,b)=> (a.timestamp || a.date || "").localeCompare(b.timestamp || b.date || ""));
+                  // markers
+                  final.forEach(p => {
+                    var color = _colorForOperator(p.operator || "Desconocido");
+                    L.circleMarker([p.lat, p.lon], {
+                      radius: 5, weight: 2, opacity: 1, fillOpacity: 0.7, color: color
+                    }).bindTooltip(p.tooltip || "").addTo(layerGroup);
+                  });
+
+                  // polilínea única (si quieres por operador, agrupar por p.operator)
+                  var latlngs = final.map(p => [p.lat, p.lon]);
+                  L.polyline(latlngs, {weight: 3, opacity: 0.8}).addTo(layerGroup);
+
+                  // Ajuste de vista
+                  if (latlngs.length === 1){
                     mapObj.setView(latlngs[0], 13);
                   } else {
-                    mapObj.fitBounds(latlngs, { padding: [24, 24] });
+                    mapObj.fitBounds(latlngs, {padding:[30,30]});
                   }
+
+                  return final;
                 }
 
-                selDay.addEventListener("change", function() {
-                  repopulateDependent(selDay.value);
-                  applyFilters();
-                });
-                selReport.addEventListener("change", applyFilters);
-                selOp.addEventListener("change", applyFilters);
-                selNet.addEventListener("change", applyFilters);
+                // Exponer para depurar
+                window.__applyFilters = _applyFilters;
 
-                // ----- DEBUG: expone objetos útiles en window -----
-                window.__pointsData = pointsData;
-                window.__applyFilters = applyFilters;
-                console.log("[FilterPanel] inicializado; total de puntos =", pointsData.length);
+                function _onChange(){ _applyFilters(); }
 
-                repopulateDependent(selDay.value);
-                applyFilters();
+                $day.addEventListener('change', _onChange);
+                $report.addEventListener('change', _onChange);
+                $operator.addEventListener('change', _onChange);
+                $network.addEventListener('change', _onChange);
+
+                // Primer pintado
+                _applyFilters();
               }
 
-              if (document.readyState === "loading") {
-                document.addEventListener("DOMContentLoaded", _initFilterPanel);
+              if (document.readyState === "loading"){
+                document.addEventListener("DOMContentLoaded", _boot);
               } else {
-                _initFilterPanel();
+                _boot();
               }
             })();
+            </script>
             {% endmacro %}
 
             """
