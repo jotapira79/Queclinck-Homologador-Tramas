@@ -715,7 +715,7 @@ class FilterPanel(MacroElement):
                 console.debug("[FilterPanel] boot");
 
                 if (document.querySelector('script[src^="data:application/json;base64"]')) {
-                  console.error("[FilterPanel] Detectado <script src=\"data:application/json;base64,…\"> en el HTML. Esto no lo genera esta versión del código.");
+                  console.error(`[FilterPanel] Detectado <script src="data:application/json;base64,…"> en el HTML. Esto no lo genera esta versión del código.`);
                 }
 
                 var figKey = _findFoliumFigureKey();
