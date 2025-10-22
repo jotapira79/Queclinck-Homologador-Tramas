@@ -788,14 +788,14 @@ class FilterPanel(MacroElement):
                   const networkValue = selNet.value;
 
                   let filtered = pointsData.slice();
-                  console.debug("[FilterPanel] total registros:", filtered.length);
+                  console.log("[FilterPanel] total registros:", filtered.length);
 
                   if (!isAll(dayValue)) {
                     filtered = filtered.filter(function(point) {
                       return point.day === dayValue;
                     });
                   }
-                  console.debug("[FilterPanel] tras día:", filtered.length);
+                  console.log("[FilterPanel] tras día:", filtered.length);
 
                   if (!isAll(reportValue)) {
                     const reportNorm = String(reportValue).trim().toUpperCase();
@@ -804,7 +804,7 @@ class FilterPanel(MacroElement):
                       return String(value).trim().toUpperCase() === reportNorm;
                     });
                   }
-                  console.debug("[FilterPanel] tras tipo:", filtered.length);
+                  console.log("[FilterPanel] tras tipo:", filtered.length);
 
                   if (!isAll(operatorValue)) {
                     const operatorNorm = String(operatorValue).trim().toLowerCase();
@@ -821,7 +821,7 @@ class FilterPanel(MacroElement):
                       return String(value).trim().toLowerCase() === networkNorm;
                     });
                   }
-                  console.debug("[FilterPanel] final filtrado:", filtered.length);
+                  console.log("[FilterPanel] final filtrado:", filtered.length);
 
                   layer.clearLayers();
 
@@ -861,6 +861,11 @@ class FilterPanel(MacroElement):
                 selReport.addEventListener("change", applyFilters);
                 selOp.addEventListener("change", applyFilters);
                 selNet.addEventListener("change", applyFilters);
+
+                // ----- DEBUG: expone objetos útiles en window -----
+                window.__pointsData = pointsData;
+                window.__applyFilters = applyFilters;
+                console.log("[FilterPanel] inicializado; total de puntos =", pointsData.length);
 
                 repopulateDependent(selDay.value);
                 applyFilters();
