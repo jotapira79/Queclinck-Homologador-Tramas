@@ -22,7 +22,11 @@ pip install folium pytz python-dateutil
 Ejemplo rápido para convertir un archivo de tramas a SQLite en PowerShell:
 
 ```bash
-python queclink_tramas.py --in datos.txt --out salida.db
+py queclink_tramas.py --in datos.txt --out <rep>_<modelo>.db
+```
+Ejemplo
+```bash
+py queclink_tramas.py --in gtfri_gv58lau.txt --out gtfri_gv58lau.db
 ```
 
 ### Detección automática de mensaje y modelo
