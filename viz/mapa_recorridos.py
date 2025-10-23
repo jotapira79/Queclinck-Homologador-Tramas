@@ -748,26 +748,6 @@ class FilterPanel(MacroElement):
                 var $operator = $panel.querySelector('#{{ this.get_name() }}_operator');
                 var $network  = $panel.querySelector('#{{ this.get_name() }}_network');
 
-                // === Debug hooks ===
-                try {
-                  window.trackLayer  = window.trackLayer  || L.layerGroup().addTo(mapObj);
-                  window.markerLayer = window.markerLayer || L.layerGroup().addTo(mapObj);
-
-                  window.__fp = {
-                    map: mapObj,
-                    data: pointsData,
-                    layers: {
-                      trackLayer:  window.trackLayer,
-                      markerLayer: window.markerLayer
-                    },
-                    renderAll,    // función que pinta todo
-                    setFilters    // función que cambia filtros
-                  };
-                  console.debug('[FilterPanel] debug hooks listos', window.__fp);
-                } catch(e) {
-                  console.error('[FilterPanel] no pude exponer hooks', e);
-                }
-
                 var trackLayer = window.trackLayer || L.layerGroup().addTo(mapObj);
                 var markerLayer = window.markerLayer || L.layerGroup().addTo(mapObj);
 
@@ -870,6 +850,27 @@ class FilterPanel(MacroElement):
                   _assignIfPresent($network, 'network');
 
                   return renderAll();
+                }
+
+                // === Debug hooks ===
+                try {
+                  window.trackLayer  = window.trackLayer  || trackLayer;
+                  window.markerLayer = window.markerLayer || markerLayer;
+
+                  window.__fp = {
+                    map: mapObj,
+                    data: pointsData,
+                    layers: {
+                      trackLayer:  window.trackLayer,
+                      markerLayer: window.markerLayer
+                    },
+                    renderAll,    // función que pinta todo
+                    setFilters    // función que cambia filtros programáticamente
+                  };
+
+                  console.debug('[FilterPanel] debug hooks listos', window.__fp);
+                } catch(e) {
+                  console.error('[FilterPanel] no pude exponer hooks', e);
                 }
 
                 function _onChange(){ renderAll(); }
