@@ -748,15 +748,35 @@ class FilterPanel(MacroElement):
                 var $operator = $panel.querySelector('#{{ this.get_name() }}_operator');
                 var $network  = $panel.querySelector('#{{ this.get_name() }}_network');
 
-                // Capa contenedora para limpiar/repintar
-                var layerGroup = L.layerGroup().addTo(mapObj);
+                // === Debug hooks ===
+                try {
+                  window.trackLayer  = window.trackLayer  || L.layerGroup().addTo(mapObj);
+                  window.markerLayer = window.markerLayer || L.layerGroup().addTo(mapObj);
+
+                  window.__fp = {
+                    map: mapObj,
+                    data: pointsData,
+                    layers: {
+                      trackLayer:  window.trackLayer,
+                      markerLayer: window.markerLayer
+                    },
+                    renderAll,    // función que pinta todo
+                    setFilters    // función que cambia filtros
+                  };
+                  console.debug('[FilterPanel] debug hooks listos', window.__fp);
+                } catch(e) {
+                  console.error('[FilterPanel] no pude exponer hooks', e);
+                }
+
+                var trackLayer = window.trackLayer || L.layerGroup().addTo(mapObj);
+                var markerLayer = window.markerLayer || L.layerGroup().addTo(mapObj);
 
                 function _colorForOperator(op){
                   var table = {{ this.operator_colors_payload | tojson }};
                   return table[op] || "#7f7f7f";
                 }
 
-                function _applyFilters(){
+                function renderAll(){
                   // 1) Día (prioritario)
                   var day = ($day.value || "All").toLowerCase();
                   var byDay = pointsData.filter(p => {
@@ -792,7 +812,8 @@ class FilterPanel(MacroElement):
                   console.debug("[FilterPanel] final filtered:", final.length);
 
                   // Repintado
-                  layerGroup.clearLayers();
+                  trackLayer.clearLayers();
+                  markerLayer.clearLayers();
                   if (final.length === 0){
                     return final;
                   }
@@ -805,12 +826,12 @@ class FilterPanel(MacroElement):
                     var color = _colorForOperator(p.operator || "Desconocido");
                     L.circleMarker([p.lat, p.lon], {
                       radius: 5, weight: 2, opacity: 1, fillOpacity: 0.7, color: color
-                    }).bindTooltip(p.tooltip || "").addTo(layerGroup);
+                    }).bindTooltip(p.tooltip || "").addTo(markerLayer);
                   });
 
                   // polilínea única (si quieres por operador, agrupar por p.operator)
                   var latlngs = final.map(p => [p.lat, p.lon]);
-                  L.polyline(latlngs, {weight: 3, opacity: 0.8}).addTo(layerGroup);
+                  L.polyline(latlngs, {weight: 3, opacity: 0.8}).addTo(trackLayer);
 
                   // Ajuste de vista
                   if (latlngs.length === 1){
@@ -823,9 +844,35 @@ class FilterPanel(MacroElement):
                 }
 
                 // Exponer para depurar
-                window.__applyFilters = _applyFilters;
+                window.__applyFilters = renderAll;
 
-                function _onChange(){ _applyFilters(); }
+                function setFilters(newFilters){
+                  newFilters = newFilters || {};
+
+                  function _assignIfPresent($select, key){
+                    if (!$select) { return; }
+                    if (!Object.prototype.hasOwnProperty.call(newFilters, key)) { return; }
+                    var value = newFilters[key];
+                    if (value === undefined || value === null) { return; }
+                    var stringValue = String(value);
+                    var options = Array.from($select.options || []);
+                    var match = options.find(function(opt){
+                      return String(opt.value).toLowerCase() === stringValue.toLowerCase();
+                    });
+                    if (match){
+                      $select.value = match.value;
+                    }
+                  }
+
+                  _assignIfPresent($day, 'day');
+                  _assignIfPresent($report, 'report');
+                  _assignIfPresent($operator, 'operator');
+                  _assignIfPresent($network, 'network');
+
+                  return renderAll();
+                }
+
+                function _onChange(){ renderAll(); }
 
                 $day.addEventListener('change', _onChange);
                 $report.addEventListener('change', _onChange);
@@ -833,7 +880,7 @@ class FilterPanel(MacroElement):
                 $network.addEventListener('change', _onChange);
 
                 // Primer pintado
-                _applyFilters();
+                renderAll();
               }
 
               if (document.readyState === "loading"){
