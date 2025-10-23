@@ -111,39 +111,29 @@ El comando anterior creará los archivos:
 
 Para más ejemplos y capturas de pantalla revisa `docs/viz/mapas.md`.
 
-## Mapas interactivos por IMEI y operador
+## Bases enriquecidas por IMEI y operador
 
-La funcionalidad descrita en `docs/viz/mapa_recorridos_por_imei.md` genera un mapa HTML
-que combina los reportes de posición (`GTERI`/`GTFRI`) con la información de red (`GTINF`).
-Cada punto adopta la última medición `GTINF` cuyo `send_time` sea menor o igual, por lo que
-los tramos del recorrido heredan la tecnología (2G/3G/4G) y la calidad de señal asociadas a
-la red disponible en ese instante.
+`viz/mapa_recorridos.py` ya no genera archivos HTML ni GeoJSON. Su responsabilidad es crear y
+mantener las bases `gteri_<modelo>_map.db` y `gtfri_<modelo>_map.db`, cruzando automáticamente
+las ubicaciones (`GTERI`/`GTFRI`) con la información de red proveniente de `GTINF`.
 
-Características destacadas:
+El proceso agrega/actualiza las columnas `tecnologia_celular`, `calidad_senal`,
+`nivel_senal_dbm` y `operador`, rellenándolas con la mejor medición `GTINF` disponible para cada
+`send_time` del recorrido. También normaliza el operador a los nombres locales (Entel, Movistar,
+Claro, WOM o Desconocido) cuando solo se dispone de MCC/MNC.
 
-- Capas independientes por operador, tecnología y día.
-- Tooltips con IMEI, coordenadas, reporte origen, tecnología, clasificación de señal y valores
-  de CSQ/BER cuando estén presentes.
-- Corrección automática de coordenadas cuando los reportes invierten latitud/longitud, incluso
-  si la trama no incluye códigos MCC.
-- Los recorridos y filtros se construyen exclusivamente a partir de las bases enriquecidas
-  `<reporte>_<modelo>_map.db`, que ahora incluyen una columna `operador` con el nombre del
-  carrier normalizado (Entel, Movistar, Claro, WOM o Desconocido).
-- Filtros `--day`, `--operator`, `--network` y `--report`, todos compatibles con la palabra
-  clave `All` para desactivar la restricción.
-
-Ejecución básica:
+Ejemplo de ejecución:
 
 ```bash
 python generate_map.py \
   --model gv350ceu \
-  --imei 862524060869597 \
-  --db-dir bases_sqlite \
-  --out-dir mapas
+  --db-dir bases_sqlite
 ```
 
-Consulta la guía completa para más ejemplos, la explicación del algoritmo de fusión y las
-consideraciones de uso.
+El comando anterior creará o actualizará las bases enriquecidas disponibles en `bases_sqlite`.
+Si se solicita un reporte que no exista (por ejemplo `gtfri`), el script emitirá una advertencia
+indicando el archivo faltante. Usa `--report` para acotar qué reportes procesar y `--strict`
+cuando prefieras que la ejecución falle ante cualquier ausencia.
 
 ## Pruebas
 

@@ -1,4 +1,4 @@
-"""Script de conveniencia para generar mapas interactivos por IMEI."""
+"""Script de conveniencia para actualizar las bases de recorridos enriquecidas."""
 from __future__ import annotations
 
 from typing import Optional, Sequence
