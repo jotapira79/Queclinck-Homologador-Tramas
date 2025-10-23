@@ -852,26 +852,29 @@ class FilterPanel(MacroElement):
                   return renderAll();
                 }
 
-                // === Debug hooks ===
-                try {
-                  window.trackLayer  = window.trackLayer  || trackLayer;
-                  window.markerLayer = window.markerLayer || markerLayer;
+                function _exposeDebugHooks(){
+                  try {
+                    window.trackLayer  = window.trackLayer  || trackLayer  || L.layerGroup().addTo(mapObj);
+                    window.markerLayer = window.markerLayer || markerLayer || L.layerGroup().addTo(mapObj);
 
-                  window.__fp = {
-                    map: mapObj,
-                    data: pointsData,
-                    layers: {
-                      trackLayer:  window.trackLayer,
-                      markerLayer: window.markerLayer
-                    },
-                    renderAll,    // función que pinta todo
-                    setFilters    // función que cambia filtros programáticamente
-                  };
+                    window.__fp = {
+                      map: mapObj,
+                      data: pointsData,
+                      layers: {
+                        trackLayer:  window.trackLayer,
+                        markerLayer: window.markerLayer
+                      },
+                      renderAll,    // función que pinta todo
+                      setFilters    // función que cambia filtros programáticamente
+                    };
 
-                  console.debug('[FilterPanel] debug hooks listos', window.__fp);
-                } catch(e) {
-                  console.error('[FilterPanel] no pude exponer hooks', e);
+                    console.debug('[FilterPanel] debug hooks listos', window.__fp);
+                  } catch(e) {
+                    console.error('[FilterPanel] no pude exponer hooks', e);
+                  }
                 }
+
+                _exposeDebugHooks();
 
                 function _onChange(){ renderAll(); }
 
