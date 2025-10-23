@@ -111,7 +111,7 @@ El comando anterior creará los archivos:
 
 Para más ejemplos y capturas de pantalla revisa `docs/viz/mapas.md`.
 
-## Bases enriquecidas por IMEI y operador
+## Bases de Datos GTERI o GTFRI Enriquecidas con Datos GTINF
 
 `viz/mapa_recorridos.py` ya no genera archivos HTML ni GeoJSON. Su responsabilidad es crear y
 mantener las bases `gteri_<modelo>_map.db` y `gtfri_<modelo>_map.db`, cruzando automáticamente
