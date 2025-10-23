@@ -117,7 +117,7 @@ Para más ejemplos y capturas de pantalla revisa `docs/viz/mapas.md`.
 mantener las bases `gteri_<modelo>_map.db` y `gtfri_<modelo>_map.db`, cruzando automáticamente
 las ubicaciones (`GTERI`/`GTFRI`) con la información de red proveniente de `GTINF`.
 
-Las bases de datos GTERI / GTFRI y GTINF deben estar en la carpeta bases_sqlite las bases de datos
+Las bases de datos GTERI / GTFRI y GTINF deben estar en la carpeta `bases_sqlite` las bases de datos
 deberían estar con los siguientes nombres `gteri_<modelo>.db`, `gtfri_<modelo>.db` o `gtinf_<modelo>.db`
 (ej: `gteri_gv310lau.db`).
 
