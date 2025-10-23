@@ -118,8 +118,8 @@ mantener las bases `gteri_<modelo>_map.db` y `gtfri_<modelo>_map.db`, cruzando a
 las ubicaciones (`GTERI`/`GTFRI`) con la información de red proveniente de `GTINF`.
 
 Las bases de datos GTERI / GTFRI y GTINF deben estar en la carpeta bases_sqlite las bases de datos
-deberían estar con los siguientes nombres gteri_<modelo>.db, gtfri_<modelo>.db o gtinf_<modelo>.db
-(ej: gteri_gv310lau.db).
+deberían estar con los siguientes nombres `gteri_<modelo>.db`, `gtfri_<modelo>.db` o `gtinf_<modelo>.db`
+(ej: `gteri_gv310lau.db`).
 
 El proceso agrega/actualiza las columnas `tecnologia_celular`, `calidad_senal`,
 `nivel_senal_dbm` y `operador`, rellenándolas con la mejor medición `GTINF` disponible para cada
