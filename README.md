@@ -125,9 +125,7 @@ Claro, WOM o Desconocido) cuando solo se dispone de MCC/MNC.
 Ejemplo de ejecución:
 
 ```bash
-python generate_map.py \
-  --model gv350ceu \
-  --db-dir bases_sqlite
+py generate_map.py --model gv350ceu --db-dir bases_sqlite
 ```
 
 El comando anterior creará o actualizará las bases enriquecidas disponibles en `bases_sqlite`.
