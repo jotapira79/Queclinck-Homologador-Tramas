@@ -427,7 +427,19 @@ def _should_force_parse(
     else:
         pattern = r"-?\d+(?:\.\d+)?"
 
-    return re.fullmatch(pattern, text) is not None
+    if re.fullmatch(pattern, text) is None:
+        return False
+
+    candidate: object
+    try:
+        candidate = int(text) if name == "sats_in_use" else float(text)
+    except ValueError:
+        return False
+
+    if not _value_within_limits(field, candidate):
+        return False
+
+    return True
 
 
 def _parse_field(
