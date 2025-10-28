@@ -17,7 +17,7 @@ Instala los paquetes mínimos para los mapas con:
 pip install folium pytz python-dateutil
 ```
 
-## Homologación de tramas GTINF/GTERI/GTFRI
+## Homologación de tramas GTINF/GTERI/GTFRI/GTJDS
 
 Ejemplo rápido para convertir un archivo de tramas a SQLite en PowerShell:
 
