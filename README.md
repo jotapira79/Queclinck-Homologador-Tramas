@@ -1,6 +1,6 @@
 # Queclinck-Homlogador-Tramas
 
-Herramientas para homologar y analizar tramas Queclink (`+RESP:GTERI` y `+RESP:GTINF`) de los
+Herramientas para homologar y analizar tramas Queclink (`GTINF, GTERI, GTFRI y GTJDS`) de los
 modelos GV310LAU, GV58LAU y GV350CEU. Permite convertir archivos de texto/CSV/XLSX a una base de
 datos SQLite y, a partir de ella, generar mapas diarios con los recorridos diferenciando entre
 reportes buffer y no buffer.
