@@ -207,13 +207,19 @@ schema:
               enum: [0, 1]
               present_if: { mask_field: ble_append_mask, bit: 14 }
 
-        - name: rat_band
-          type: group
+        - name: rat
+          type: int
+          min: 0
+          max: 255
           optional: true
-          description: "Habitualmente controlado por el bit 13 de eri_mask, pero algunos firmwares lo envían siempre."
-          fields:
-            - { name: rat, type: int, min: 0, max: 255 }
-            - { name: band, type: string, nullable: true }
+          enabled_if_any:
+            - { mask_field: eri_mask, bit: 13 }
+
+        - name: band
+          type: string
+          max_length: 8
+          optional: true
+          present_if: { field_present: rat }
 
     - name: tail
       fields:

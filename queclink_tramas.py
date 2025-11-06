@@ -9,8 +9,15 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from queclink.ingestor_sqlite import SQLiteIngestor
-from queclink.parser import HeadInfo, identify_head, load_spec, model_from_imei, parse_line
-from queclink.parser import Spec
+from queclink.parser import (
+    HeadInfo,
+    Spec,
+    detect_model_from_identifiers,
+    identify_head,
+    load_spec,
+    normalize_line_for_spec,
+    parse_line,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,38 +38,6 @@ def _normalize_report_name(message: str) -> str:
     if not normalized.startswith("GT"):
         normalized = f"GT{normalized}"
     return normalized
-
-
-def _prepare_line_for_parsing(
-    raw_line: str, head: HeadInfo, spec: Optional[Spec]
-) -> str:
-    if spec is None:
-        return raw_line
-
-    report = (head.report or "").strip().upper()
-    if not report.startswith("GT"):
-        return raw_line
-
-    header_field = next((field for field in spec.fields if field.name == "header"), None)
-    if not header_field or not header_field.const_any:
-        return raw_line
-
-    allowed_headers = set(header_field.const_any)
-    if "+RESP:GT" not in allowed_headers and "+BUFF:GT" not in allowed_headers:
-        return raw_line
-
-    suffix = report[2:]
-    if not suffix:
-        return raw_line
-
-    for prefix in ("+RESP:GT", "+BUFF:GT"):
-        marker = f"{prefix}{suffix}"
-        if marker in allowed_headers:
-            # ``spec`` already expects the full header, no replacement needed.
-            return raw_line
-        if raw_line.startswith(marker):
-            return raw_line.replace(marker, f"{prefix},{suffix}", 1)
-    return raw_line
 
 
 def _process_line(
@@ -94,9 +69,15 @@ def _process_line(
         return False
 
     imei = fields[2]
-    model = model_from_imei(imei)
+    device_name = fields[3] if len(fields) > 3 else None
+    model = detect_model_from_identifiers(imei, device_name)
     if not model:
-        _LOGGER.warning("Línea %s: prefijo IMEI no homologado (%s)", line_number, imei)
+        _LOGGER.warning(
+            "Línea %s: identificadores de modelo no homologados (IMEI=%s, device_name=%s)",
+            line_number,
+            imei,
+            device_name or "",
+        )
         return False
 
     try:
@@ -107,10 +88,17 @@ def _process_line(
         )
         return False
 
-    normalized_line = _prepare_line_for_parsing(raw_line, head, spec)
+    normalized_line = normalize_line_for_spec(raw_line, head.report, spec)
 
     try:
-        record = parse_line(normalized_line, head.source, model, head.report, spec=spec)
+        record = parse_line(
+            normalized_line,
+            head.source,
+            model,
+            head.report,
+            spec=spec,
+            enrich=True,
+        )
     except Exception as exc:  # pragma: no cover - errores de parsing específicos
         if head.report.upper() == "GTINF":
             record = _relaxed_gtinf_parse(normalized_line, spec)

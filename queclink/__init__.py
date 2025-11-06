@@ -2,6 +2,20 @@
 
 from __future__ import annotations
 
-from .parser import identify_head, load_spec, model_from_imei, parse_line
+from .parser import (
+    detect_model_from_identifiers,
+    identify_head,
+    load_spec,
+    model_from_imei,
+    normalize_line_for_spec,
+    parse_line,
+)
 
-__all__ = ["identify_head", "load_spec", "model_from_imei", "parse_line"]
+__all__ = [
+    "identify_head",
+    "load_spec",
+    "model_from_imei",
+    "detect_model_from_identifiers",
+    "normalize_line_for_spec",
+    "parse_line",
+]
