@@ -1,0 +1,77 @@
+name: "+RESP/+BUFF:GTINF"
+device: "GV75LAU"
+message_family: "INF"
+encoding: "ASCII"
+delimiter: ","
+terminator: "$"
+version_field: { name: full_protocol_version, length: 10, format: hex }
+
+schema:
+  sections:
+    - name: head
+      fields:
+        - { name: header, const_any: ["+RESP:GT", "+BUFF:GT"], type: string }
+        - { name: message, const: "INF", type: string }
+        - { name: full_protocol_version, type: hex, length: 10 }
+        - { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$" }
+        - { name: device_name, const: "GV75LAU", type: string }
+
+    - name: body
+      fields:
+        # Estado de movimiento (2 chars HEX, ver tabla Motion Status)
+        - { name: motion_status, type: string, length: 2 }
+
+        # Identidad SIM
+        - { name: iccid, type: string, min_length: 19, max_length: 22 }
+
+        # Señal celular
+        - { name: csq, type: int, min: 0, max: 255, comment: "RSSI 0–31|99 para GSM/WCDMA; RSRP 0–97|255 para LTE" }
+        - { name: ber, type: int, min: 0, max: 99 }
+
+        # Energía y batería
+        - { name: ext_power_supply, type: int, enum: [0,1] }
+        - { name: ext_power_voltage_mv, type: int, min: 0, max: 900000 }
+        - { name: network_type, type: int, min: 0, max: 9, optional: true, comment: "Incluido si INF Expansion2 Mask bit4=1" }
+        - { name: backup_batt_volt_v, type: float, min: 0.00, max: 5.00, precision: 2 }
+        - { name: backup_batt_level_pct, type: int, min: 0, max: 100, optional: true }
+        - { name: charging, type: int, enum: [0,1] }
+        - { name: led_state, type: int, min: 0, max: 9, optional: true }
+
+        # Reservados / opcionales según máscaras de INF
+        - { name: reserved1, type: string, optional: true }
+        - { name: reserved2, type: string, optional: true }
+
+        # Tiempo de último fix GNSS
+        - { name: last_fix_utc, type: datetime, format: "YYYYMMDDHHMMSS" }
+
+        # IO y máscaras
+        - { name: eio100_io_status, type: hex, max_length: 4, optional: true }
+        - { name: di_mask, type: hex, max_length: 2, optional: true }
+        - { name: do_mask, type: hex, max_length: 2, optional: true }
+        - { name: pin_mode, type: hex, max_length: 1, optional: true }
+
+        # Zona horaria y DST
+        - { name: timezone_offset, type: string, length: 5, pattern: "^[+-][0-9]{4}$" }
+        - { name: dst, type: int, enum: [0,1] }
+
+    - name: tail
+      fields:
+        - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS" }
+        - { name: count_hex, type: hex, length: 4 }
+
+validation:
+  rules:
+    - { name: header_and_message, assert: "(header in ['+RESP:GT', '+BUFF:GT']) and message == 'INF'" }
+    - { name: terminator,        assert: "line.endswith('$')" }
+
+notes:
+  - "Los grupos de información incluidos en GTINF están gobernados por <INF Expansion Mask> y <INF Expansion2 Mask>. Algunos campos marcados como opcionales sólo aparecen si las máscaras correspondientes están activas."
+  - "<network_type> está presente cuando <INF Expansion2 Mask> bit4=1."
+  - "<ext_power_voltage_mv> puede reportarse con 2 o 4 bytes según configuración interna; en ASCII se normaliza a mV."
+  - "<csq> reporta RSSI/BER para 2G/3G y RSRP/BER para LTE."
+
+examples:
+  - raw: "+RESP:GTINF,80200C0100,866314060583471,GV75LAU,11,8956012345678901234,27,0,1,13250,4,4.08,0,,,20251029091530,0F,01,00,+0000,0,20251029091533,6B91$"
+    parsed_keys_must_include: [imei, device_name, motion_status, iccid, csq, ext_power_voltage_mv, last_fix_utc, timezone_offset, send_time, count_hex]
+  - raw: "+BUFF:GTINF,80200C0100,866314060583471,GV75LAU,12,8935711001088072340f,38,7,1,27890,,4.11,1,2,,20251007143611,0A,03,01,-0300,1,20251007143612,34DA$"
+    parsed_keys_must_include: [header, message, imei, motion_status, charging, timezone_offset, dst, send_time, count_hex]
