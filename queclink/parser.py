@@ -22,6 +22,13 @@ _MODEL_PREFIXES = {
     "86252406": "gv350ceu",
 }
 
+_DEVICE_NAME_MODELS = {
+    "GV58LAU": "gv58lau",
+    "GV310LAU": "gv310lau",
+    "GV350CEU": "gv350ceu",
+    "GV75LAU": "gv75lau",
+}
+
 
 _EQUALS_SENTINEL = object()
 
@@ -217,6 +224,15 @@ def model_from_imei(imei: str) -> Optional[str]:
     return _MODEL_PREFIXES.get(prefix)
 
 
+def _model_from_device_name(name: Optional[str]) -> Optional[str]:
+    if not name:
+        return None
+    normalized = str(name).strip().upper()
+    if not normalized:
+        return None
+    return _DEVICE_NAME_MODELS.get(normalized)
+
+
 def _spec_path(model: str, message: str) -> Path:
     return Path("spec") / model.lower() / f"{message.lower()}.yml"
 
@@ -338,6 +354,49 @@ def _normalize_message_name(message: str) -> str:
     return f"GT{message}"
 
 
+def normalize_line_for_spec(raw_line: str, message: str, spec: Optional[Spec]) -> str:
+    if spec is None:
+        return raw_line
+
+    normalized_message = _normalize_message_name(message or "")
+    header_field = next((field for field in spec.fields if field.name == "header"), None)
+    if not header_field or not header_field.const_any:
+        return raw_line
+
+    allowed_headers = set(header_field.const_any)
+    if not allowed_headers:
+        return raw_line
+
+    if not normalized_message.startswith("GT"):
+        return raw_line
+
+    suffix = normalized_message[2:]
+    if not suffix:
+        return raw_line
+
+    for prefix in ("+RESP:GT", "+BUFF:GT"):
+        matching_headers = [header for header in allowed_headers if header.startswith(prefix)]
+        if not matching_headers:
+            continue
+
+        if prefix in allowed_headers:
+            marker = f"{prefix}{suffix}"
+            if marker in allowed_headers:
+                continue
+            if raw_line.startswith(marker):
+                return raw_line.replace(marker, f"{prefix},{suffix}", 1)
+            continue
+
+        target = matching_headers[0]
+        if raw_line.startswith(target):
+            return raw_line
+        target_suffix = target[len(prefix) :]
+        composite = f"{prefix},{target_suffix}"
+        if raw_line.startswith(composite):
+            return raw_line.replace(composite, target, 1)
+    return raw_line
+
+
 def parse_line(
     line: str,
     source: Optional[str] = None,
@@ -345,6 +404,7 @@ def parse_line(
     message: Optional[str] = None,
     *,
     spec: Optional[Spec] = None,
+    enrich: Optional[bool] = None,
 ) -> dict:
     head = identify_head(line) if source is None or message is None else None
     if head:
@@ -354,14 +414,17 @@ def parse_line(
         raise ValueError("No se pudo determinar el tipo de mensaje")
     message = _normalize_message_name(message)
     tokens = _tokenize(line)
+    reported_device = tokens[3] if len(tokens) > 3 else None
     if model is None:
         if len(tokens) < 3:
             raise ValueError("No se pudo inferir el modelo por falta de campos")
-        model = model_from_imei(tokens[2])
+        model = detect_model_from_identifiers(tokens[2], reported_device)
     if model is None and spec is None:
         raise ValueError("No se pudo determinar el modelo de la trama")
+    spec_was_provided = spec is not None
     if spec is None:
         spec = load_spec(model or "", message)
+    line = normalize_line_for_spec(line, message, spec)
     model = model or spec.model
     tokens = _tokenize(line, delimiter=spec.delimiter, terminator=spec.terminator)
     stream = _TokenStream(tokens)
@@ -382,11 +445,19 @@ def parse_line(
     normalized_report = message
     if normalized_report:
         normalized_report = normalized_report.upper()
-    if normalized_report and "report" not in result:
-        result["report"] = normalized_report
-    if normalized_report and "message" not in result:
+    enrich_records = enrich if enrich is not None else not spec_was_provided
+
+    if normalized_report and enrich_records:
+        if "report" not in result:
+            result["report"] = normalized_report
         result["message"] = normalized_report
-    return result
+    if spec is not None and enrich_records:
+        result.setdefault("model", getattr(spec, "model", None))
+    if not enrich_records:
+        return result
+    protocol_version = result.get("full_protocol_version") or result.get("protocol_version")
+    count_hex = result.get("count_hex")
+    return _common_enrich(result, source, protocol_version, count_hex)
 
 
 def _should_force_parse(
@@ -481,7 +552,8 @@ def _parse_field(
         return None
 
     if field.const is not None and raw != field.const:
-        raise ValueError(f"El campo {field.name} no coincide con el valor esperado")
+        if field.name not in {"device_name"}:
+            raise ValueError(f"El campo {field.name} no coincide con el valor esperado")
     if field.const_any:
         if not any(raw.startswith(prefix) for prefix in field.const_any):
             raise ValueError(f"El campo {field.name} no coincide con los prefijos permitidos")
@@ -752,9 +824,15 @@ def _to_iso(timestamp: Optional[str]) -> Optional[str]:
 def detect_model_from_identifiers(imei: Optional[str], reported_device: Optional[str]) -> Optional[str]:
     """Best effort model detection using IMEI prefix and reported device name."""
 
-    model = model_from_imei(imei or "")
-    if model:
-        return model.upper()
+    imei_model = model_from_imei(imei or "")
+    reported_model = _model_from_device_name(reported_device)
+
+    if reported_model and imei_model and reported_model != imei_model:
+        return reported_model.upper()
+    if reported_model:
+        return reported_model.upper()
+    if imei_model:
+        return imei_model.upper()
     if reported_device:
         normalized = reported_device.strip().upper()
         if normalized:
@@ -918,6 +996,8 @@ __all__ = [
     "HeadInfo",
     "identify_head",
     "model_from_imei",
+    "detect_model_from_identifiers",
+    "normalize_line_for_spec",
     "load_spec",
     "parse_line",
     "parse_gteri",

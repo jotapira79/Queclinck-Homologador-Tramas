@@ -1,7 +1,7 @@
 # Queclinck-Homlogador-Tramas
 
 Herramientas para homologar y analizar tramas Queclink (`GTINF, GTERI, GTFRI y GTJDS`) de los
-modelos GV310LAU, GV58LAU y GV350CEU. Permite convertir archivos de texto/CSV/XLSX a una base de
+modelos GV310LAU, GV58LAU, GV75LAU y GV350CEU. Permite convertir archivos de texto/CSV/XLSX a una base de
 datos SQLite y, a partir de ella, generar mapas diarios con los recorridos diferenciando entre
 reportes buffer y no buffer.
 
@@ -35,13 +35,16 @@ El CLI identifica el tipo de mensaje leyendo el `Head` (`+RESP:GTINF`, `+BUFF:GT
 extrae el nombre corto (`INF`, `ERI`) para localizar automáticamente el archivo YAML adecuado
 (`spec/<modelo>/<mensaje>.yml`).
 
-El modelo se determina exclusivamente por los **primeros ocho dígitos del IMEI**:
+El modelo se determina combinando los **primeros ocho dígitos del IMEI** y, cuando es necesario,
+el nombre de equipo reportado en la trama:
 
-- `86631406` → **GV58LAU**
 - `86858906` → **GV310LAU**
 - `86252406` → **GV350CEU**
+- `86631406` → **GV58LAU** (si el cuarto campo no indica otro modelo)
+- `86631406` + `device_name=GV75LAU` → **GV75LAU**
 
-Si el prefijo no está homologado se omite la trama y se deja un log de advertencia.
+Si los identificadores no corresponden a un modelo soportado se omite la trama y se deja un log de
+advertencia detallando el IMEI y el `device_name` recibido.
 
 ### Esquema estrictamente definido por YAML
 
