@@ -68,6 +68,21 @@ schema:
         # Hour Meter (si AT+GTHMC habilitado)
         - { name: hour_meter_count, type: string, pattern: "^[0-9]{5,7}:[0-9]{2}:[0-9]{2}$", optional: true }
 
+        #Reservados
+        - { name: reserved1, type: string, optional: true }
+        - { name: reserved2, type: string, optional: true }
+        - { name: reserved3, type: string, optional: true }
+
+        #Porcentaje de batería y estado dispositvo
+        - { name: backup_battery_percentage, type: int, min: 0, max: 100, optional: true }
+        - { name: device_status, type: hex, length_variant: [6,10] }
+        
+        #Reservados
+        - { name: reserved4, type: string, optional: true }
+        - { name: reserved5, type: string, optional: true }
+        - { name: reserved6, type: string, optional: true }
+        
+
     - name: tail
       fields:
         # Hora de envío generada por el equipo (UTC).
