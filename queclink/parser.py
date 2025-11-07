@@ -33,6 +33,33 @@ _DEVICE_NAME_MODELS = {
 _EQUALS_SENTINEL = object()
 
 
+_COND_MASK_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*&\s*(0x[0-9A-Fa-f]+|\d+)(?:\s*!=?\s*0)?$")
+
+
+def _condition_from_expression(expression: str) -> Optional["Condition"]:
+    if not isinstance(expression, str):
+        return None
+    text = expression.strip()
+    if not text:
+        return None
+    match = _COND_MASK_RE.match(text)
+    if not match:
+        return None
+    field_name, mask_raw = match.groups()
+    try:
+        mask_value = int(mask_raw, 0)
+    except ValueError:
+        return None
+    if mask_value <= 0 or (mask_value & (mask_value - 1)) != 0:
+        return None
+    bit_index = 0
+    value = mask_value
+    while value > 1:
+        value >>= 1
+        bit_index += 1
+    return Condition(mask_field=field_name, bit=bit_index)
+
+
 @dataclass(frozen=True)
 class Condition:
     mask_field: Optional[str] = None
@@ -45,9 +72,9 @@ class Condition:
     all_of: Sequence["Condition"] = field(default_factory=tuple)
 
     @staticmethod
-    def from_mapping(mapping: Optional[dict]) -> Optional["Condition"]:
+    def from_mapping(mapping: Optional[dict | str]) -> Optional["Condition"]:
         if not mapping or not isinstance(mapping, dict):
-            return None
+            return _condition_from_expression(mapping) if isinstance(mapping, str) else None
 
         any_of_raw = mapping.get("anyOf") or mapping.get("any_of")
         if isinstance(any_of_raw, (list, tuple)):
@@ -465,6 +492,17 @@ def _should_force_parse(
     stream: _TokenStream,
     config: Optional[dict[str, object]],
 ) -> bool:
+    name = getattr(field, "name", None)
+    if name == "satellites_used":
+        token = stream.peek()
+        if token in (None, ""):
+            return False
+        text = str(token).strip()
+        if not text:
+            return False
+        if re.fullmatch(r"\d{1,2}", text):
+            return True
+
     if not config:
         return False
 
