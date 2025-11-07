@@ -6,12 +6,10 @@ delimiter: ","
 terminator: "$"
 version_field: { name: full_protocol_version, length: 10, format: hex }
 
-# Fuente técnica principal: @Track Air Interface Protocol GV75LAU v1.00
-# Campo <Report ID / Report Type> y orden completo de parámetros para GTFRI: ver tabla de GTFRI
-# (Full Protocol Version, IMEI, Device Name, Report ID/Type, Number, GNSS block, GSM tower, Position Append Mask,
-#  [Satellites Used]*, Mileage*, Send Time, Count)
-# *Condicional según <Position Append Mask> (bit 0) y <Report Composition Mask> (bit 4), respectivamente.
-# Soporte opcional: <External Power Voltage> (si AT+GTEPS Sync with FRI=1), y <Hour Meter Count> (si AT+GTHMC habilitado).
+# Fuente técnica principal: @Track Air Interface Protocol GV75LAU v3.00
+# Orden de parámetros GTFRI: (Full Protocol Version, IMEI, Device Name?, Report ID/Type, Number, GNSS block, GSM tower,
+# Position Append Mask, [Satellites]*, Mileage*, Send Time, Count)
+# *Condicionales: [Satellites] si PAM bit0=1; Mileage si Report Composition Mask bit4=1. GNSS Trigger Type aparece si PAM bit1=1 (solo FRI/ERI).
 
 schema:
   sections:
@@ -26,16 +24,19 @@ schema:
 
     - name: body
       fields:
-        # Report ID / Report Type: 1 byte en HEX representado por 2 ASCII. X=ID, Y=Type
-        -
-          name: ext_power_mv
+        # Puede venir antes del report_id_type si AT+GTEPS 'Sync with FRI'=1
+        - name: ext_power_mv
           type: int
           min: 1000
           max: 900000
           optional: true
-          comment: "External Power Voltage (mV); algunos firmware lo envían antes de <report_id_type> (>=1V para diferenciarlo)"
+          comment: "External Power Voltage (mV); algunos firmware lo envían antes de <report_id_type>"
+
+        # Report ID / Report Type: 1 byte en HEX (XY: X=ID, Y=Type)
         - { name: report_id_type, type: hex, length: 2, comment: "XY -> X=Report ID (1..5), Y=Report Type (0..6)" }
-        - { name: number, type: int, min: 1, max: 2, comment: "Cantidad de posiciones GNSS en el reporte (1 o 2)" }
+
+        # En v3.00 el máximo documentado sube hasta 15 (generalmente es 1 en ASCII)
+        - { name: number, type: int, min: 1, max: 15, comment: "Cantidad de posiciones GNSS en el reporte" }
 
         # --- GNSS Position (repite por 'number' veces en GTFRI; este esquema describe 1 posición) ---
         - { name: gnss_accuracy_hdop, type: int, min: 0, max: 50, comment: "0 = no fix, 1..50 = HDOP" }
@@ -53,10 +54,12 @@ schema:
         - { name: cell_id, type: hex, length_variant: [4,8], optional: true }
 
         # Máscara de anexos por posición (después de Cell ID)
-        - { name: position_append_mask, type: hex, max_length: 2 }
-        # Bit 0 => Satellites Used
-        - { name: satellites_used, type: int, min: 0, max: 24, optional: true, present_if: "position_append_mask & 0x01" }
-        # Bit 1 => GNSS Trigger Type (solo en GTFRI / GTERI)
+        - { name: position_append_mask, type: hex, max_length: 2, comment: "Bit0: Satellites; Bit1: GNSS Trigger Type (solo FRI/ERI, auto); Bit2: Device Status (eventos)" }
+
+        # PAM bit0 => número de satélites (0..72 en v3.00)
+        - { name: satellites_used, type: int, min: 0, max: 72, optional: true, present_if: "position_append_mask & 0x01" }
+
+        # PAM bit1 => GNSS Trigger Type (solo FRI/ERI). El equipo lo muestra si Wrap Corner Point=1
         - { name: gnss_trigger_type, type: int, enum: [0,1,2,3,4], optional: true, present_if: "position_append_mask & 0x02", comment: "0:Time,1:Corner,2:Distance,3:Mileage,4:Optimum" }
 
         # Kilometraje total (si <Report Composition Mask> bit 4 = 1)
@@ -67,7 +70,7 @@ schema:
 
     - name: tail
       fields:
-        # Hora de envío generada por el equipo (UTC). El homologador puede convertir a America/Santiago.
+        # Hora de envío generada por el equipo (UTC).
         - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS" }
         - { name: count_hex, type: hex, length: 4 }
 
@@ -79,16 +82,18 @@ validation:
     - { name: report_type_range, assert: "int(report_id_type[1],16) in [0,1,2,3,6]" }
 
 notes:
-  - "<Report ID / Report Type>: ID=1..5 (tiempo, distancia, kilometraje, tiempo&km, tiempo|km); Type=0..6 (normal, corner, FRI freq change, corner+freq, reserved, mileage+FFC)."
-  - "'<number>' puede ser 2 si se empaqueta un punto de esquina ('Wrap Corner Point'=1) y se envía junto con otro punto cuando se cumplen las condiciones."
-  - "Los campos después de <cell_id> están gobernados por <position_append_mask>: bit0=Satellites Used; bit1=GNSS Trigger Type. El bit2 (Device Status) aplica a casi todos los mensajes de evento, no a GTFRI."
+  - "Position Append Mask: bit0=satélites (in use/in view) para la posición; bit1=GNSS Trigger Type (solo FRI/ERI, no configurable por AT+GTCFG); bit2=Device Status (aplica a casi todos los mensajes de evento, no GTFRI)."
+  - "Si Wrap Corner Point=1 (AT+GTFRI), el equipo fuerza PAM bit1=1 en FRI/ERI y agrega <gnss_trigger_type>."
+  - "<satellites_used> ahora tiene rango 0–72."
+  - "'<number>' puede ser >1 si se empaquetan puntos (máx. 15)."
   - "<mileage_km> aparece sólo si <Report Composition Mask> bit4=1 (AT+GTCFG)."
   - "<ext_power_mv> aparece si AT+GTEPS está configurado con 'Sync with FRI'=1."
   - "<device_name> puede omitirse si <Report Composition Mask> bit6=0; si viene, debe ser 'GV75LAU'."
 
 examples:
-  # Ejemplo ficticio (para pruebas de parser). Ajusta IMEI/coords/tiempos a tu entorno.
-  - raw: "+RESP:GTFRI,80200C0100,866314060583471,GV75LAU,10,1,12,45.6,180,12.3,-70.650123,-33.437200,20251029091530,0460,0000,1A2B,00FF,03,12345.6,20251029091533,1A2B$"
-    parsed_keys_must_include: [imei, report_id_type, number, gnss_utc_time, position_append_mask, send_time, count_hex]
-  - raw: "+BUFF:GTFRI,80200C0100,866314060583471,GV75LAU,11,1,8,0.0,0,0.0,-70.650100,-33.437100,20251029092000,0460,0000,1A2B,0003,08,0,13550,00012:35:07,20251029092002,3F7C$"
-    parsed_keys_must_include: [header, message, report_id_type, satellites_used, gnss_trigger_type, ext_power_mv, hour_meter_count, send_time]
+  # Ejemplo ficticio acorde a v3.00; con PAM bit0+bit1 y gnss_trigger_type presente.
+  - raw: "+RESP:GTFRI,80200C0300,866314060583471,GV75LAU,10,1,12,45.6,180,12.3,-70.650123,-33.437200,20251029091530,0460,0000,1A2B,0003,08,12345.6,20251029091533,1A2B$"
+    parsed_keys_must_include: [imei, report_id_type, number, gnss_utc_time, position_append_mask, satellites_used, gnss_trigger_type, send_time, count_hex]
+  # Ejemplo con solo satélites (PAM bit0) y sin trigger type
+  - raw: "+BUFF:GTFRI,80200C0300,866314060583471,GV75LAU,11,1,8,0.0,0,0.0,-70.650100,-33.437100,20251029092000,0460,0000,1A2B,0001,09,0,00012:35:07,20251029092002,3F7C$"
+    parsed_keys_must_include: [header, message, report_id_type, satellites_used, hour_meter_count, send_time]
