@@ -27,6 +27,13 @@ schema:
     - name: body
       fields:
         # Report ID / Report Type: 1 byte en HEX representado por 2 ASCII. X=ID, Y=Type
+        -
+          name: ext_power_mv
+          type: int
+          min: 1000
+          max: 900000
+          optional: true
+          comment: "External Power Voltage (mV); algunos firmware lo envían antes de <report_id_type> (>=1V para diferenciarlo)"
         - { name: report_id_type, type: hex, length: 2, comment: "XY -> X=Report ID (1..5), Y=Report Type (0..6)" }
         - { name: number, type: int, min: 1, max: 2, comment: "Cantidad de posiciones GNSS en el reporte (1 o 2)" }
 
@@ -54,9 +61,6 @@ schema:
 
         # Kilometraje total (si <Report Composition Mask> bit 4 = 1)
         - { name: mileage_km, type: float, min: 0.0, max: 4294967.0, precision: 1, optional: true }
-
-        # Voltaje de alimentación externa (si AT+GTEPS <Sync with FRI> = 1)
-        - { name: ext_power_mv, type: int, min: 0, max: 900000, optional: true }
 
         # Hour Meter (si AT+GTHMC habilitado)
         - { name: hour_meter_count, type: string, pattern: "^[0-9]{5,7}:[0-9]{2}:[0-9]{2}$", optional: true }
