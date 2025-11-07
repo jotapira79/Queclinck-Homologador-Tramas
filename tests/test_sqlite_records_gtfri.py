@@ -37,12 +37,12 @@ GTFRI_GV350CEU_LINES = [
 
 
 GTFRI_GV75LAU_LINES = [
-    "+RESP:GTFRI,80200C0100,866314060583471,GV75LAU,10,1,12,45.6,180,12.3,"\
-    "-70.650123,-33.437200,20251029091530,0460,0000,1A2B,00FF,03,12345.6,"\
-    "20251029091533,1A2B$",
-    "+BUFF:GTFRI,80200C0100,866314060583471,GV75LAU,11,1,8,0.0,0,0.0,"\
-    "-70.650100,-33.437100,20251029092000,0460,0000,1A2B,0003,08,0,13550,"\
-    "00012:35:07,20251029092002,3F7C$",
+    "+RESP:GTFRI,80200C0300,866314060583471,GV75LAU,10,1,12,45.6,180,12.3,"\
+    "-70.650123,-33.437200,20251029091530,0460,0000,1A2B,00FF,03,12,3,12345.6,"\
+    "00012:35:07,,,,85,221102,,,,20251029091533,1A2B$",
+    "+BUFF:GTFRI,80200C0300,866314060583471,GV75LAU,11,1,8,0.0,0,0.0,"\
+    "-70.650100,-33.437100,20251029092000,0460,0000,1A2B,0003,03,10,1,13550.0,"\
+    "00012:35:07,,,,100,210100,,,,20251029092002,3F7C$",
 ]
 
 
@@ -160,9 +160,10 @@ def test_ingest_lines_creates_gtfri_gv75lau_table_with_spec_columns():
 
     rows = conn.execute(
         f'SELECT cell_id, position_append_mask, satellites_used, '
-        f'gnss_trigger_type, count_hex FROM "{table_name}" ORDER BY send_time'
+        f'gnss_trigger_type, mileage_km, backup_battery_percentage, '
+        f'device_status, count_hex FROM "{table_name}" ORDER BY send_time'
     ).fetchall()
     assert rows == [
-        ("00FF", "03", None, None, "1A2B"),
-        ("0003", "08", 0, None, "3F7C"),
+        ("00FF", "03", 12, 3, 12345.6, 85, "221102", "1A2B"),
+        ("0003", "03", 10, 1, 13550.0, 100, "210100", "3F7C"),
     ]
