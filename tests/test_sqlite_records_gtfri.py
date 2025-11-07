@@ -164,5 +164,5 @@ def test_ingest_lines_creates_gtfri_gv75lau_table_with_spec_columns():
     ).fetchall()
     assert rows == [
         ("00FF", "03", None, None, "1A2B"),
-        ("0003", "08", 0, 13550, "3F7C"),
+        ("0003", "08", 0, None, "3F7C"),
     ]

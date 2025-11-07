@@ -5,6 +5,13 @@ from __future__ import annotations
 from queclink.parser import Condition, load_spec
 
 
+def test_condition_from_bitmask_expression():
+    cond = Condition.from_mapping("position_append_mask & 0x02")
+    assert cond is not None
+    assert cond.mask_field == "position_append_mask"
+    assert cond.bit == 1
+
+
 def _field_map(spec):
     return {field.name: field for field in spec.fields}
 
