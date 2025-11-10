@@ -33,22 +33,33 @@ schema:
         - { name: ext_power_voltage_mv, type: int, min: 0, max: 900000 }
         - { name: network_type, type: int, min: 0, max: 9, optional: true, comment: "Incluido si INF Expansion2 Mask bit4=1" }
         - { name: backup_batt_volt_v, type: float, min: 0.00, max: 5.00, precision: 2 }
-        - { name: backup_batt_level_pct, type: int, min: 0, max: 100, optional: true }
         - { name: charging, type: int, enum: [0,1] }
         - { name: led_state, type: int, min: 0, max: 9, optional: true }
+        - { name: power_saving_mode, type: int, min: 0, max: 2 }
 
         # Reservados / opcionales según máscaras de INF
         - { name: reserved1, type: string, optional: true }
+        
+        # Tiempo de último fix GNSS
+        - { name: last_fix_utc, type: datetime, format: "YYYYMMDDHHMMSS" }
+
+        # Reservados / opcionales según máscaras de INF
         - { name: reserved2, type: string, optional: true }
 
         # Tiempo de último fix GNSS
         - { name: last_fix_utc, type: datetime, format: "YYYYMMDDHHMMSS" }
 
+        # Pin Mask
+        - { name: pin_mask, type: hex, length_variant: [1,2] }
+
+        # Reservados / opcionales según máscaras de INF
+        - { name: reserved3, type: string, optional: true }
+        - { name: reserved4, type: string, optional: true }
+        - { name: reserved5, type: string, optional: true }
+
         # IO y máscaras
-        - { name: eio100_io_status, type: hex, max_length: 4, optional: true }
         - { name: di_mask, type: hex, max_length: 2, optional: true }
         - { name: do_mask, type: hex, max_length: 2, optional: true }
-        - { name: pin_mode, type: hex, max_length: 1, optional: true }
 
         # Zona horaria y DST
         - { name: timezone_offset, type: string, length: 5, pattern: "^[+-][0-9]{4}$" }
