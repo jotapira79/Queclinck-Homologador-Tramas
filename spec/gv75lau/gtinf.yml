@@ -35,35 +35,42 @@ schema:
         - { name: backup_batt_volt_v, type: float, min: 0.00, max: 5.00, precision: 2 }
         - { name: charging, type: int, enum: [0,1] }
         - { name: led_state, type: int, min: 0, max: 9, optional: true }
-        - { name: power_saving_mode, type: int, min: 0, max: 2 }
-
-        # Reservados / opcionales según máscaras de INF
-        - { name: reserved1, type: string, optional: true }
-        
-        # Tiempo de último fix GNSS
-        - { name: last_fix_utc, type: datetime, format: "YYYYMMDDHHMMSS" }
-
-        # Reservados / opcionales según máscaras de INF
-        - { name: reserved2, type: string, optional: true }
+        - { name: power_saving_mode, type: int, min: 0, max: 2, optional: true }
 
         # Tiempo de último fix GNSS
         - { name: last_fix_utc, type: datetime, format: "YYYYMMDDHHMMSS" }
 
-        # Pin Mask
-        - { name: pin_mask, type: hex, length_variant: [1,2] }
-
-        # Reservados / opcionales según máscaras de INF
-        - { name: reserved3, type: string, optional: true }
-        - { name: reserved4, type: string, optional: true }
-        - { name: reserved5, type: string, optional: true }
-
-        # IO y máscaras
+        # Máscaras de IO
+        - { name: pin_mask, type: hex, length_variant: [1,2], optional: true }
         - { name: di_mask, type: hex, max_length: 2, optional: true }
         - { name: do_mask, type: hex, max_length: 2, optional: true }
 
         # Zona horaria y DST
         - { name: timezone_offset, type: string, length: 5, pattern: "^[+-][0-9]{4}$" }
         - { name: dst, type: int, enum: [0,1] }
+
+        # Máscara de datos extendidos
+        - { name: inf_expand_mask, type: hex, length_variant: [1,2,4], optional: true }
+
+        # 1-Wire Data (habilitado por inf_expand_mask bit0)
+        - name: one_wire_device_number
+          type: int
+          min: 0
+          max: 19
+          optional: true
+          default_if_absent: 0
+          present_if: { mask_field: inf_expand_mask, bit: 0 }
+
+        - name: one_wire_devices
+          type: group_repeated
+          repeat: one_wire_device_number
+          optional: true
+          enabled_if_any:
+            - { mask_field: inf_expand_mask, bit: 0 }
+          fields:
+            - { name: one_wire_device_id,   type: hex, length_variant: [16] }
+            - { name: one_wire_device_type, type: int, min: 0, max: 255, optional: true }
+            - { name: one_wire_device_data, type: hex, max_length: 40, optional: true }
 
     - name: tail
       fields:
@@ -80,6 +87,7 @@ notes:
   - "<network_type> está presente cuando <INF Expansion2 Mask> bit4=1."
   - "<ext_power_voltage_mv> puede reportarse con 2 o 4 bytes según configuración interna; en ASCII se normaliza a mV."
   - "<csq> reporta RSSI/BER para 2G/3G y RSRP/BER para LTE."
+  - "<inf_expand_mask> controla la presencia de bloques adicionales (p. ej. 1-Wire). Bit0 habilita los campos <one_wire_device_*>."
 
 examples:
   - raw: "+RESP:GTINF,80200C0100,866314060583471,GV75LAU,11,8956012345678901234,27,0,1,13250,4,4.08,0,,,20251029091530,0F,01,00,+0000,0,20251029091533,6B91$"
