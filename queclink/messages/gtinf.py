@@ -5,8 +5,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 import re
 
-from ..parser import _split, detect_model_from_identifiers
-from ..specs.loader import get_spec_columns
+from ..parser import _split, detect_model_from_identifiers, load_spec
 
 _GTINF_HEADERS = {"+RESP:GTINF", "+BUFF:GTINF"}
 
@@ -43,14 +42,16 @@ def parse_gtinf(line: str, source: str = "RESP", device: Optional[str] = None) -
 
     model = model.strip().upper()
     try:
-        columns = get_spec_columns("GTINF", model)
-    except ValueError:
+        spec = load_spec(model, "GTINF")
+    except (ValueError, FileNotFoundError):
         fallback = reported_device_name.strip().upper()
         if fallback and fallback != model:
-            columns = get_spec_columns("GTINF", fallback)
+            spec = load_spec(fallback, "GTINF")
             model = fallback
         else:
             raise
+
+    columns = [field.name for field in spec.fields]
 
     # Reconstruir "header" y "message" de la spec a partir del primer token
     hm = _split_header_message(first)
@@ -64,8 +65,17 @@ def parse_gtinf(line: str, source: str = "RESP", device: Optional[str] = None) -
     values.append(hm["message"])
 
     iterator = iter(parts[1:])
-    for column in columns[2:]:
-        values.append(next(iterator, None))
+    for field in spec.fields[2:]:
+        raw_value = next(iterator, None)
+        if raw_value is None:
+            values.append(None)
+            continue
+
+        if raw_value == "" and (field.optional or getattr(field, "nullable", False)):
+            values.append(None)
+            continue
+
+        values.append(raw_value)
 
     homologated = dict(zip(columns, values))
     if reported_device_name:

@@ -1,5 +1,6 @@
 import re
 from queclink.parser import parse_line
+from queclink.messages.gtinf import parse_gtinf
 from tests.common.assert_gtinf_shape import assert_gtinf_shape
 
 RAW = [
@@ -18,3 +19,10 @@ def test_gtinf_gv350ceu_basico():
         assert d["imei"] == shape["imei"]
         assert d["count_hex"] == shape["count_hex"]
         assert "send_time_iso" in d and len(d["send_time_iso"]) >= 19
+
+
+def test_gtinf_gv350ceu_reserved_fields_are_none():
+    data = parse_gtinf(RAW[0], device="GV350CEU")
+    assert "reserved1" in data and data["reserved1"] is None
+    assert "reserved2" in data and data["reserved2"] is None
+    assert "reserved3" in data and data["reserved3"] is None
