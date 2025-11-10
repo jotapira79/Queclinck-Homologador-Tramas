@@ -66,7 +66,9 @@ las ubicaciones (`GTERI`/`GTFRI`) con la información de red proveniente de `GTI
 
 Las bases de datos GTERI / GTFRI y GTINF deben estar en la carpeta `bases_sqlite` las bases de datos
 deberían estar con los siguientes nombres `gteri_<modelo>.db`, `gtfri_<modelo>.db` o `gtinf_<modelo>.db`
-(ej: `gteri_gv310lau.db`).
+(ej: `gteri_gv310lau.db`). Para el equipo **GV75LAU** (que reporta recorridos vía `GTFRI`) asegúrate
+de contar con `gtfri_gv75lau.db` y `gtinf_gv75lau.db` (o sus variantes `_map.db` si ya fueron
+generadas). Actualmente se soportan los modelos GV310LAU, GV58LAU, GV75LAU y GV350CEU.
 
 El proceso agrega/actualiza las columnas `tecnologia_celular`, `calidad_senal`,
 `nivel_senal_dbm` y `operador`, rellenándolas con la mejor medición `GTINF` disponible para cada
@@ -77,6 +79,10 @@ Ejemplo de ejecución:
 
 ```bash
 py generate_map.py --model gv350ceu --db-dir bases_sqlite
+```
+
+```bash
+py generate_map.py --model gv75lau --db-dir bases_sqlite --report gtfri
 ```
 
 El comando anterior creará o actualizará las bases enriquecidas disponibles en `bases_sqlite`.
