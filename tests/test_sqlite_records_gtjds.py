@@ -1,4 +1,4 @@
-"""SQLite ingestion tests for GV310LAU GTJDS records."""
+"""SQLite ingestion tests for GTJDS records across supported models."""
 
 from src.ingestors.sqlite_records import (
     ensure_db,
@@ -89,5 +89,61 @@ def test_ingest_lines_creates_gtjds_gv310lau_table_with_spec_columns():
             "0001",
             "0C82",
             "00550412",
+        ),
+    ]
+
+
+GTJDS_GV75LAU_LINES = [
+    "+RESP:GTJDS,80200C0300,135790246811220,GV75LAU,1,3,0,4.3,92,70.0,121.354335,31.222073,20230214013254,0460,0000,18d8,6141,05,1,220100,20230214093254,11F0$",
+    "+BUFF:GTJDS,80200C0300,135790246811220,GV75LAU,2,3,0,0.0,0,0.0,-, -,20230214013254,,,,,00,20230214013254,11F1$",
+]
+
+
+def test_ingest_lines_creates_gtjds_gv75lau_table_with_spec_columns():
+    conn = ensure_db(":memory:")
+
+    inserted = ingest_lines(conn, GTJDS_GV75LAU_LINES, message="GTJDS")
+    assert inserted == len(GTJDS_GV75LAU_LINES)
+
+    spec = resolve_spec("GTJDS", "GV75LAU")
+    table_name = spec["spec"].table_name
+
+    cursor = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,),
+    )
+    assert cursor.fetchone() is not None
+
+    info = conn.execute(f'PRAGMA table_info("{table_name}")').fetchall()
+    columns = [row[1] for row in info]
+    expected_columns = [name for name, _ in spec_to_sql_columns(spec)]
+    assert columns == expected_columns
+
+    rows = conn.execute(
+        f'SELECT unique_id, jamming_status, jamming_net, position_append_mask, '
+        f'satellites_in_use, device_status, longitude_deg, latitude_deg '
+        f'FROM "{table_name}" ORDER BY send_time'
+    ).fetchall()
+
+    assert rows == [
+        (
+            "135790246811220",
+            2,
+            3,
+            "00",
+            None,
+            None,
+            None,
+            None,
+        ),
+        (
+            "135790246811220",
+            1,
+            3,
+            "05",
+            1,
+            "220100",
+            121.354335,
+            31.222073,
         ),
     ]
