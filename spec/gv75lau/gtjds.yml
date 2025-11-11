@@ -54,26 +54,6 @@ schema:
         # --- Append Mask de posición ---
         - { name: position_append_mask, type: hex, length: 2, description: "00-FF (bitwise for optional position fields)" }
         - { name: satellites_in_use, type: int, min: 0, max: 72, optional: true, when: { mask: position_append_mask, bit: 0 } }
-        - name: horizontal_gnss_accuracy
-          type: float
-          min: 0.00
-          max: 99.99
-          optional: true
-          when:
-            any_of:
-              - { mask: position_append_mask, bit: 1 }
-              - { mask: position_append_mask, bit: 3 }
-        - name: vertical_gnss_accuracy
-          type: float
-          min: 0.00
-          max: 99.99
-          optional: true
-          when:
-            any_of:
-              - { mask: position_append_mask, bit: 2 }
-              - { mask: position_append_mask, bit: 3 }
-        - { name: gnss_3d_accuracy, type: float, min: 0.00, max: 99.99, optional: true, when: { mask: position_append_mask, bit: 3 } }
-
         - name: device_status
           type: hex
           length_variant: [6,10]
