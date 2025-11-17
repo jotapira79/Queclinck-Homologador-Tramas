@@ -53,31 +53,28 @@ def parse_gtinf(line: str, source: str = "RESP", device: Optional[str] = None) -
 
     columns = [field.name for field in spec.fields]
 
-    # Reconstruir "header" y "message" de la spec a partir del primer token
-    hm = _split_header_message(first)
-    if hm is None:
-        return {}
-
-    # Ahora mapeamos por posición:
-    # spec espera: header, message, full_protocol_version, imei, device_name, ...
+    # Ahora mapeamos por posición respetando el orden exacto de la spec
     values: List[Optional[str]] = []
-    values.append(hm["header"])
-    values.append(hm["message"])
+    values.append(first)
 
     iterator = iter(parts[1:])
-    for field in spec.fields[2:]:
+    for field in spec.fields[1:]:
         raw_value = next(iterator, None)
         if raw_value is None:
             values.append(None)
             continue
 
-        if raw_value == "" and (field.optional or getattr(field, "nullable", False)):
+        if raw_value == "":
             values.append(None)
             continue
 
         values.append(raw_value)
 
     homologated = dict(zip(columns, values))
+
+    # Para compatibilidad con el parser general, añadimos "message" derivado del header
+    homologated.setdefault("message", "INF")
+
     if reported_device_name:
         homologated["device_name"] = reported_device_name
 
