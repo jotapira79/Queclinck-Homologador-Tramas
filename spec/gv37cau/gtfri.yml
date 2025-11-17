@@ -72,10 +72,13 @@ schema:
           type: int
           min: 0
           max: 4
+          optional: true
           nullable: true
+          when: { mask: position_append_mask, bit: 1 }
           description: >
             Tipo de disparo del punto GNSS (0=Time, 1=Corner, 2=Distance, 3=Mileage, 4=Optimum).
-            Puede venir vacío si la función no está habilitada en ERI Mask.
+            Solo se incluye si el bit1 de la Position Append Mask está activo; si el bit está apagado, el
+            campo se omite por completo.
 
         # --- Contadores y entradas analógicas ---
         - { name: mileage_km, type: float, min: 0.0, max: 4294967.0, description: "Current Mileage, incluido en cada posición" }
@@ -110,6 +113,7 @@ masks:
     size_bits: 8
     bits:
       0: { field: sats_in_use, description: "Satellites in Use" }
+      1: { field: gnss_trigger_type, description: "GNSS Trigger Type (si bit1=1)" }
       # Bits 1-7 se dejan sin mapear en este esquema; reservados para futuras extensiones
       # (p.ej. RAT/Band data u otros campos controlados por AT+GTFRI/ERI).
 
