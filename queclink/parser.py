@@ -20,6 +20,7 @@ _MODEL_PREFIXES = {
     "86631406": "gv58lau",
     "86858906": "gv310lau",
     "86252406": "gv350ceu",
+    "86848700": "gv37cau",
 }
 
 _DEVICE_NAME_MODELS = {
@@ -27,6 +28,7 @@ _DEVICE_NAME_MODELS = {
     "GV310LAU": "gv310lau",
     "GV350CEU": "gv350ceu",
     "GV75LAU": "gv75lau",
+    "GV37CAU": "gv37cau",
 }
 
 
