@@ -33,7 +33,9 @@ py queclink_tramas.py --in gtfri_gv58lau.txt --out gtfri_gv58lau.db
 
 El CLI identifica el tipo de mensaje leyendo el `Head` (`+RESP:GTINF`, `+BUFF:GTERI`, etc.) y
 extrae el nombre corto (`INF`, `ERI`) para localizar automáticamente el archivo YAML adecuado
-(`spec/<modelo>/<mensaje>.yml`).
+(`spec/<modelo>/<mensaje>.yml`). Con los nuevos YAML de **GV37CAU** el parser reconoce tanto
+`+RESP` como `+BUFF` para los reportes GTINF, GTERI, GTFRI y GTJDS sin afectar los modelos ya
+existentes.
 
 El modelo se determina combinando los **primeros ocho dígitos del IMEI** y, cuando es necesario,
 el nombre de equipo reportado en la trama:
