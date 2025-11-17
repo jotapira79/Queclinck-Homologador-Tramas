@@ -508,6 +508,11 @@ def _should_force_parse(
     if not config:
         return False
 
+    if name == "gnss_trigger_type":
+        token = stream.peek()
+        if token == "":
+            return True
+
     tolerated_raw = config.get("tolerate_unmasked_position_fields")
     if not tolerated_raw:
         return False

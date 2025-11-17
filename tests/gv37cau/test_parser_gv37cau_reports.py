@@ -81,3 +81,17 @@ def test_parse_line_imei_only_detection(line, expected_report):
 
     assert parsed["report"] == expected_report
     assert parsed["model"] == "GV37CAU"
+
+
+def test_gtfri_position_append_mask_without_gnss_trigger():
+    line = (
+        "+RESP:GTFRI,8020220200,868487005333364,,,50,1,1,1.6,250,585.3,-70.638368,-33.434252,"
+        "20251117111630,0730,0001,333B,008D1203,01,0,56423.9,,,,,100,220100,,,,20251117111632,4315$"
+    )
+
+    parsed = parse_line(line)
+
+    assert parsed["position_append_mask"] == "01"
+    assert parsed["sats_in_use"] == 0
+    assert parsed.get("gnss_trigger_type") is None
+    assert parsed["backup_batt_pct"] == 100
