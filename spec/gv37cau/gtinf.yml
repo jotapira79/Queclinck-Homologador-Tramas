@@ -114,6 +114,8 @@ schema:
 
         - { name: reserved3, type: string, optional: true }
 
+        - { name: reserved4, type: string, optional: true }
+
         - name: digital_input_status
           type: hex
           length_max: 4
