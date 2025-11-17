@@ -220,6 +220,8 @@ schema:
           max_length: 8
           optional: true
           present_if: { field_present: rat }
+          enabled_if_any:
+            - { field_present: rat }
 
     - name: tail
       fields:

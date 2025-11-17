@@ -615,6 +615,7 @@ def _parse_model_specific_default(fields: List[str], start_idx: int) -> Dict[str
     if cursor < len(remaining):
         peek = (remaining[cursor] or "").strip().upper()
         ble_bit_on = (eri_mask_value is not None) and ((eri_mask_value & ((1 << 8) | (1 << 12))) != 0)
+        ble_start = cursor
         if peek == "BLE":
             cursor += 1
             ble_block, cursor = _parse_ble_block(remaining, cursor)
@@ -624,6 +625,21 @@ def _parse_model_specific_default(fields: List[str], start_idx: int) -> Dict[str
             if ble_block:
                 cursor = cursor_candidate
             skip_empty_values()
+
+        if (not ble_block or (ble_block.get("accessory_number") in (None, 0))) and ble_bit_on:
+            for idx in range(0, len(remaining)):
+                candidate_block, candidate_cursor = _parse_ble_block(remaining, idx)
+                accessory_number = (candidate_block or {}).get("accessory_number") if candidate_block else None
+                items = (candidate_block or {}).get("items") if candidate_block else None
+                if not (accessory_number and items and 0 < accessory_number <= 25):
+                    continue
+                if len(items) != accessory_number:
+                    continue
+                has_mask = any((item or {}).get("append_mask") for item in items)
+                if has_mask:
+                    ble_block = candidate_block
+                    cursor = candidate_cursor
+                    break
     if ble_block:
         out["ble_block"] = ble_block
         out["ble_count"] = ble_block.get("accessory_number")

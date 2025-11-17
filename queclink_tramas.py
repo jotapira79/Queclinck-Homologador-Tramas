@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -17,6 +18,7 @@ from queclink.parser import (
     load_spec,
     normalize_line_for_spec,
     parse_line,
+    parse_gteri,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -88,6 +90,10 @@ def _process_line(
         )
         return False
 
+    records_spec = (
+        replace(spec, table_name=f"{head.report.lower()}_records") if expected_report else None
+    )
+
     normalized_line = normalize_line_for_spec(raw_line, head.report, spec)
 
     try:
@@ -108,11 +114,23 @@ def _process_line(
             _LOGGER.debug(
                 "Línea %s: se aplicó parsing relajado para GTINF (%s)", line_number, exc
             )
+        elif head.report.upper() == "GTERI":
+            record = parse_gteri(normalized_line, device=model)
+            if not record:
+                _LOGGER.warning(
+                    "Línea %s: error al parsear la trama (%s)", line_number, exc
+                )
+                return False
         else:
             _LOGGER.warning("Línea %s: error al parsear la trama (%s)", line_number, exc)
             return False
 
+    if head.report.upper() == "GTINF":
+        record["message"] = "INF"
+
     ingestor.insert(model, head.report, record, spec=spec)
+    if records_spec is not None:
+        ingestor.insert(model, head.report, record, spec=records_spec)
     return True
 
 

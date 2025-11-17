@@ -13,7 +13,7 @@ def test_parse_gtinf_resp_gv37cau():
     assert homologated["imei"] == "868487004398475"
     assert homologated["device_name"] == "GV37CAU"
     assert homologated["send_time"] == "20250314090005"
-    assert homologated["count_number"] == "0001"
+    assert homologated["count_hex"] == "0001"
 
 
 def test_parse_gtinf_buff_gv37cau_without_device_name():
@@ -28,4 +28,4 @@ def test_parse_gtinf_buff_gv37cau_without_device_name():
     assert homologated["imei"] == "868487004398475"
     assert homologated["device_name"] is None
     assert homologated["send_time"] == "20250314090751"
-    assert homologated["count_number"] == "0999"
+    assert homologated["count_hex"] == "0999"

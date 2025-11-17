@@ -388,6 +388,9 @@ def normalize_line_for_spec(raw_line: str, message: str, spec: Optional[Spec]) -
         return raw_line
 
     normalized_message = _normalize_message_name(message or "")
+    has_message_field = any(getattr(field, "name", None) == "message" for field in spec.fields)
+    if has_message_field and raw_line.startswith(("+RESP:GT,", "+BUFF:GT,")):
+        return raw_line
     header_field = next((field for field in spec.fields if field.name == "header"), None)
     if not header_field or not header_field.const_any:
         return raw_line
@@ -470,6 +473,16 @@ def parse_line(
         )
         if value is not _SKIP:
             result[field.name] = value
+
+    if message == "GTERI" and "one_wire_device_number" not in result:
+        result["one_wire_device_number"] = 0
+
+    if message == "GTERI":
+        tail_tokens = _tokenize(line, delimiter=spec.delimiter, terminator=spec.terminator)
+        if len(tail_tokens) >= 1:
+            result["count_hex"] = tail_tokens[-1]
+        if len(tail_tokens) >= 2:
+            result["send_time"] = tail_tokens[-2]
 
     normalized_report = message
     if normalized_report:
