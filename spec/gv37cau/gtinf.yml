@@ -1,1 +1,168 @@
+name: "GTINF"
+device: "GV37CAU"
+message_family: "INF (Device Information Report)"
+encoding: "ASCII"
+delimiter: ","
+terminator: "$"
 
+version_field:
+  name: full_protocol_version
+  length: 10          # Ej: 8020230100
+  format: hex
+  example: "8020230100"
+
+schema:
+  sections:
+    - name: head
+      fields:
+        - { name: header, const_any: ["+RESP:GTINF", "+BUFF:GTINF"], type: string }
+        - { name: full_protocol_version, type: hex, length: 10, example: "8020230100" }
+        - { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$", example: "868487004398475" }
+        - { name: device_name, type: string, max_length: 20, pattern: "^[0-9A-Za-z_-]{0,20}$", nullable: true, description: "Device Name configurado en AT+GTCFG; puede venir vacío" }
+
+    - name: body
+      fields:
+        # --- Estado del dispositivo y SIM/GSM ---
+        - name: motion_state
+          type: hex
+          length: 2
+          description: "Estado de movimiento actual (11,12,16,1A,21,22,41,42)"
+          enum:
+            "11": "Ignition Off Rest"
+            "12": "Ignition Off Motion"
+            "16": "Tow"
+            "1A": "Fake Tow"
+            "21": "Ignition On Rest"
+            "22": "Ignition On Motion"
+            "41": "Sensor Rest (sin señal de ignición)"
+            "42": "Sensor Motion (sin señal de ignición)"
+
+        - name: iccid
+          type: string
+          length: 20
+          pattern: "^[0-9a-zA-Z]{20}$"
+          description: "ICCID de la SIM"
+
+        - name: csq_rssi
+          type: int
+          min: 0
+          max: 99
+          description: "CSQ RSSI (0–31, 99 = desconocido)"
+
+        - name: csq_ber
+          type: int
+          min: 0
+          max: 7
+          description: "CSQ BER (Bit Error Rate)"
+
+        # --- Alimentación y batería ---
+        - name: external_power_present
+          type: int
+          enum: [0, 1]
+          description: "0 = No presente, 1 = Fuente de poder externa presente"
+
+        - name: external_power_mv
+          type: int
+          min: 0
+          max: 99999
+          nullable: true
+          description: "Voltaje fuente externa (mV). Campo puede venir vacío si no aplica."
+
+        - { name: reserved1, type: number, nullable: true }
+
+        - name: backup_batt_voltage_v
+          type: float
+          min: 0.00
+          max: 4.20
+          nullable: true
+          description: "Voltaje batería de respaldo (V)."
+
+        - name: charging
+          type: int
+          enum: [0, 1]
+          description: "Estado de carga de batería de respaldo (0 = no cargando, 1 = cargando)"
+
+        - name: led_on
+          type: int
+          enum: [0, 1]
+          description: "Estado LED (0 = apagado según config, 1 = encendido)"
+
+        - { name: reserved2, type: number, nullable: true }
+
+        - name: external_gnss_antenna
+          type: int
+          enum: [0, 1, 3]
+          nullable: true
+          description: "Estado antena GNSS externa (0=interna/normal, 1=externa OK, 3=falla/open/short)"
+
+        # --- Última fix y entradas/salidas ---
+        - name: last_fix_utc_time
+          type: datetime
+          format: "YYYYMMDDHHMMSS"
+          tz: "UTC"
+          description: "Hora UTC de la última fix GNSS conocida"
+
+        - { name: reserved3, type: number, nullable: true }
+
+        - name: analog_input_vcc_mv
+          type: int
+          min: 0
+          max: 30000
+          nullable: true
+          description: "Analog Input VCC (mV). En GV3xx se documenta como 0–30000 mV."
+
+        - { name: reserved4, type: number, nullable: true }
+
+        - name: digital_input_status
+          type: hex
+          length_max: 4
+          pattern: "^[0-9A-Fa-f]{1,4}$"
+          description: "Estado entradas digitales, rango 0000–0F0F (bitfield de DI)."
+
+        - name: digital_output_status
+          type: hex
+          length_max: 4
+          pattern: "^[0-9A-Fa-f]{1,4}$"
+          description: "Estado salidas digitales, rango 0000–0F07 (bitfield de DO)."
+
+        # --- Zona horaria ---
+        - name: timezone_offset
+          type: string
+          length: 5
+          pattern: "^[+-][0-1][0-9][0-5][0-9]$"
+          example: "+0000"
+          description: "Offset de zona horaria (+/-HHMM)."
+
+        - name: daylight_saving
+          type: int
+          enum: [0, 1]
+          description: "Horario de verano (0 = desactivado, 1 = activado)"
+
+    - name: tail
+      fields:
+        - name: send_time
+          type: datetime
+          format: "YYYYMMDDHHMMSS"
+          tz: "UTC"
+          description: "Hora UTC en que se generó el reporte"
+
+        - name: count_number
+          type: hex
+          length: 4
+          description: "Secuencia 0000–FFFF"
+
+        - { name: tail, const: "$", type: string, optional: true, default_if_absent: "$" }
+
+notes:
+  - "GTINF es el reporte periódico de información de dispositivo, habilitado con <Info Report Enable> en AT+GTCFG. Incluye estado del dispositivo, ICCID, nivel de señal, voltajes de alimentación, estado de carga, estado de antena GNSS externa, última hora de fix GNSS, estados de DI/DO y configuración de zona horaria/hora de verano, tal como se documenta para la familia GV3xx. :contentReference[oaicite:1]{index=1}"
+  - "El formato ASCII de +RESP:GTINF y +BUFF:GTINF mantiene el mismo orden de parámetros en toda la serie GV3xx, por lo que el GV37CAU utiliza la misma estructura que GV300CAN en la sección Device Information Report. :contentReference[oaicite:2]{index=2}"
+  - "Motion State (11,12,16,1A,21,22,41,42) codifica reposo/movimiento y encendido/apagado de ignición, y es clave para diagnósticos de remolque y estado de motor."
+  - \"Last Fix UTC Time\" y \"Send Time\" están en UTC y deben convertirse a horario oficial de Chile continental en tu aplicación, considerando DST según la fecha del registro."
+  - "Muchos campos pueden venir vacíos (coma-coma) según hardware instalado y configuración: por ejemplo, external_power_mv si no hay fuente externa, analog_input_vcc_mv si la entrada analógica no se usa, o external_gnss_antenna si no hay antena externa."
+
+examples:
+  raw_frames:
+    # Ejemplo sintético con Device Name presente
+    - "+RESP:GTINF,8020230100,868487004398475,GV37CAU,21,898600810906F8048812,20,0,1,12000,,4.10,1,1,,1,20250314090000,,12345,,01,00,+0000,0,20250314090005,0001$"
+    # Ejemplo basado en la familia GV3xx (estructura real, datos adaptados)
+    - "+BUFF:GTINF,4B0303,868487004398475,,21,898600810906F8048812,28,0,1,12346,,4.20,0,0,,1,20250314090748,,23000,,01,01,+0000,0,20250314090751,0999$"
