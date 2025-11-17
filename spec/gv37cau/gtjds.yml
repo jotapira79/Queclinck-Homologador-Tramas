@@ -1,0 +1,107 @@
+name: "GTJDS"
+device: "GV37CAU"
+message_family: "JDS (Jamming Indication Notification)"
+encoding: "ASCII"
+delimiter: ","
+terminator: "$"
+
+version_field:
+  name: full_protocol_version
+  length: 10
+  format: hex
+  example: "8020230100"
+
+schema:
+  sections:
+    - name: head
+      fields:
+        - { name: header, const_any: ["+RESP:GTJDS", "+BUFF:GTJDS"], type: string }
+        - { name: full_protocol_version, type: hex, length: 10, example: "8020230100" }
+        - { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$", example: "868487004398475" }
+        - { name: device_name, type: string, max_length: 20, pattern: "^[0-9A-Za-z_-]{1,20}$", example: "GV37CAU" }
+
+    - name: body
+      fields:
+        # --- Estado de jamming ---
+        - name: jamming_status
+          type: int
+          enum:
+            1: "quit_jamming_state"
+            2: "enter_jamming_state"
+          description: "Estado actual de jamming (1=salir de jamming, 2=entrar en jamming)."
+
+        - name: jamming_net
+          type: int
+          min: 1
+          max: 3
+          description: "Red donde se detecta jamming: 1=EGPRS/GSM, 2=LTE Cat1, 3=EGPRS/GSM+LTE."
+
+        # --- Posición GNSS y calidad ---
+        - name: gnss_accuracy_level
+          type: int
+          min: 0
+          max: 50
+          description: "0 = usa última posición conocida; 1–50 ≈ HDOP de la fix actual."
+
+        - { name: speed_kmh, type: float, min: 0.0, max: 999.9 }
+        - { name: azimuth_deg, type: int, min: 0, max: 359 }
+        - { name: altitude_m, type: float, note: "(-)xxxxx.x (m)" }
+        - { name: longitude_deg, type: float, note: "(-)xxx.xxxxxx" }
+        - { name: latitude_deg, type: float, note: "(-)xx.xxxxxx" }
+
+        - name: gnss_utc_time
+          type: datetime
+          format: "YYYYMMDDHHMMSS"
+          tz: "UTC"
+          description: "Hora GNSS UTC, debe convertirse a hora oficial de Chile en la app."
+
+        # --- GSM/Red servidora ---
+        - { name: mcc, type: string, pattern: "^0[0-9]{3}$", example: "0730", description: "0 + MCC (3 dígitos). Ej: 0730 para Chile (730)." }
+        - { name: mnc, type: string, pattern: "^0[0-9]{2,3}$", example: "0001" }
+        - { name: lac, type: hex, length: 4 }
+        - { name: cell_id, type: hex, length_variant: [4,8] }
+
+        # --- Position Append Mask y satélites opcionales ---
+        - { name: position_append_mask, type: hex, length: 2, example: "01", description: "Máscara 1 byte. Bit0 indica si se incluye sats_in_use." }
+
+        - name: sats_in_use
+          type: int
+          min: 0
+          max: 72
+          when: { mask: position_append_mask, bit: 0 }
+          description: "Número de satélites GNSS en uso (campo opcional controlado por position_append_mask)."
+
+    - name: tail
+      fields:
+        - name: send_time
+          type: datetime
+          format: "YYYYMMDDHHMMSS"
+          tz: "UTC"
+          description: "Hora UTC en que se envía el reporte."
+
+        - { name: count_number, type: hex, length: 4, description: "Contador 0000–FFFF." }
+
+        - { name: tail, const: "$", type: string, optional: true, default_if_absent: "$" }
+
+masks:
+  position_append_mask:
+    size_bits: 8
+    bits:
+      0: { field: sats_in_use, description: "Satellites in Use" }
+      # Bits 1–7 reservados para futuras extensiones.
+
+notes:
+  - "GTJDS es un reporte de evento de jamming. Se genera cuando el <Mode> del comando AT+GTJDC se configura en 2: el equipo reporta +RESP:GTJDS al entrar o salir del estado de jamming. :contentReference[oaicite:1]{index=1}"
+  - "La estructura ASCII de GTJDS para GV500CG (versión 8020xxxxxx) incluye: Protocolo, IMEI, Device Name, Jamming Status, Jamming Net, GNSS Accuracy, Speed, Azimuth, Altitude, Longitud, Latitud, GNSS UTC Time, MCC, MNC, LAC, Cell ID, Position Append Mask, Satellites in Use (opcional), Send Time y Count Number. Se asume el mismo orden y tipos para GV37CAU por compatibilidad de familia. :contentReference[oaicite:2]{index=2}"
+  - "Jamming Status: 1 = salir de estado de jamming; 2 = entrar en estado de jamming. :contentReference[oaicite:3]{index=3}"
+  - "Jamming Net: 1 = EGPRS/GSM, 2 = LTE-Cat1, 3 = EGPRS/GSM+LTE; heredado de la definición de GTJDR/JDS en la documentación oficial. :contentReference[oaicite:4]{index=4}"
+  - "GNSS UTC Time y Send Time están en UTC y deben convertirse a horario oficial de Chile continental (con DST) en tu aplicación/ETL, igual que en GTFRI/GTINF."
+  - "Satellites in Use sólo se incluye si bit0 del Position Append Mask está en 1; si no, el campo viene omitido (coma-coma en la trama). :contentReference[oaicite:5]{index=5}"
+  - "GTJDS no incluye ERI (CAN, 1-wire, BLE, fuel, etc.): es un evento puntual de jamming con la última posición y contexto de red."
+
+examples:
+  raw_frames:
+    # Ejemplo sintético adaptado a GV37CAU (estructura real, datos ficticios)
+    - "+RESP:GTJDS,8020230100,868487004398475,GV37CAU,2,3,10,64.0,180,50.0,-70.654321,-33.456789,20250314093000,0730,0001,1A2B,3C4D,01,12,20250314093003,00AF$"
+    # Ejemplo basado directamente en la documentación oficial (GV500CG, para validar orden de campos)
+    - "+RESP:GTJDS,8020090302,135790246811220,gv500cg,1,3,0,4.3,92,70.0,121.354335,31.222073,20230214013254,0460,0000,18d8,6141,01,1,20230214093254,11F0$"
