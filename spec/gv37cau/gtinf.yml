@@ -68,7 +68,11 @@ schema:
           nullable: true
           description: "Voltaje fuente externa (mV). Campo puede venir vacío si no aplica."
 
-        - { name: network_type, type: int, enum: [0,1,2,3] }            # 0=unreg,1=EGPRS,2=WCDMA,3=LTE
+        - name: network_type
+          type: int
+          enum: [0, 1, 2, 3]
+          nullable: true
+          description: "Tipo de red (0=unreg,1=EGPRS,2=WCDMA,3=LTE). Puede venir vacío."
 
         - name: backup_batt_voltage_v
           type: float
@@ -87,9 +91,18 @@ schema:
           enum: [0, 1]
           description: "Estado LED (0 = apagado según config, 1 = encendido)"
 
-        - { name: reserved1, type: number, nullable: true }
-        
-        - { name: reserved2, type: number, nullable: true }
+        - name: power_saving_mode
+          type: int
+          min: 0
+          max: 2
+          nullable: true
+          description: "Modo de ahorro de energía (0=off,1=light,2=deep); puede venir vacío."
+
+        - name: external_gnss_antenna
+          type: int
+          enum: [0, 1]
+          nullable: true
+          description: "Estado de antena GNSS externa (0 = no detectada, 1 = conectada)."
 
         
         # --- Última fix y entradas/salidas ---
@@ -101,9 +114,19 @@ schema:
 
         - { name: pin_mask, type: hex, length_variant: [1,2] }
 
-        - { name: reserved3, type: number, nullable: true }
+        - name: analog_input1_mv
+          type: int
+          min: 0
+          max: 99999
+          nullable: true
+          description: "Lectura de entrada analógica 1 (mV)."
 
-        - { name: reserved4, type: number, nullable: true }
+        - name: analog_input2_mv
+          type: int
+          min: 0
+          max: 99999
+          nullable: true
+          description: "Lectura de entrada analógica 2 (mV)."
 
         - name: digital_input_status
           type: hex
@@ -138,7 +161,7 @@ schema:
           tz: "UTC"
           description: "Hora UTC en que se generó el reporte"
 
-        - name: count_number
+        - name: count_hex
           type: hex
           length: 4
           description: "Secuencia 0000–FFFF"

@@ -36,16 +36,12 @@ schema:
         - { name: charging, type: int, enum: [0,1] }
         - { name: led_state, type: int, min: 0, max: 9, optional: true }
         - { name: power_saving_mode, type: int, min: 0, max: 2, optional: true }
-        - { name: reserved1, type: string, optional: true }
 
         # Tiempo de último fix GNSS
         - { name: last_fix_utc, type: datetime, format: "YYYYMMDDHHMMSS" }
 
         # Máscaras de IO
         - { name: pin_mask, type: hex, length_variant: [1,2], optional: true }
-        - { name: reserved2, type: string, optional: true }
-        - { name: reserved3, type: string, optional: true }
-        - { name: reserved4, type: string, optional: true }
         - { name: di_mask, type: hex, max_length: 2, optional: true }
         - { name: do_mask, type: hex, max_length: 2, optional: true }
 

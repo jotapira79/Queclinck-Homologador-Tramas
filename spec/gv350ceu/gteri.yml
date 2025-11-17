@@ -5,6 +5,50 @@ encoding: "ASCII"
 delimiter: ","
 terminator: "$"
 
+config:
+  table_fields:
+    - header
+    - message
+    - full_protocol_version
+    - imei
+    - device_name
+    - eri_mask
+    - external_power_mv
+    - report_type
+    - number
+    - gnss_accuracy
+    - speed_kmh
+    - azimuth_deg
+    - altitude_m
+    - lon
+    - lat
+    - gnss_utc_time
+    - mcc
+    - mnc
+    - lac_hex
+    - cell_id_hex
+    - position_append_mask
+    - satellites_in_use
+    - hdop
+    - vdop
+    - pdop
+    - gnss_trigger_type
+    - gnss_jamming_state
+    - mileage_km
+    - hour_meter
+    - analog_in_1
+    - analog_in_2
+    - analog_in_3
+    - backup_batt_percent
+    - device_status
+    - uart_device_type
+    - ble_count
+    - ble_accessories
+    - rat
+    - band
+    - send_time
+    - count_hex
+
 version_field:
   name: full_protocol_version
   length_variant: [6, 7]
@@ -17,10 +61,11 @@ schema:
     # =========================
     - name: head
       fields:
-        - { name: header, const_any: ["+RESP:GTERI", "+BUFF:GTERI"], type: string }
+        - { name: header, const_any: ["+RESP:GTERI", "+BUFF:GTERI", "+RESP:GT", "+BUFF:GT"], type: string }
+        - { name: message, const: "ERI", type: string }
         - { name: full_protocol_version, type: hex, length_variant: [6, 7] }
         - { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$" }
-        - { name: device_name, type: string, max_length: 20 }
+        - { name: device_name, const: "GV350CEU", type: string }
 
     # ===================================
     # CUERPO FIJO (Siempre viene en GTERI)
@@ -36,8 +81,8 @@ schema:
         - { name: speed_kmh, type: float, min: 0.0, max: 999.9 }
         - { name: azimuth_deg, type: int, min: 0, max: 359 }
         - { name: altitude_m, type: float, min: -1000.0, max: 30000.0, optional: true }
-        - { name: lat, type: float, min: -90.0, max: 90.0 }
         - { name: lon, type: float, min: -180.0, max: 180.0 }
+        - { name: lat, type: float, min: -90.0, max: 90.0 }
         - { name: gnss_utc_time, type: datetime, format: "YYYYMMDDHHMMSS" }
 
         # ---- Red celular (fijo) ----
@@ -108,131 +153,22 @@ schema:
         - { name: device_status, type: hex, length_variant: [6, 10], optional: true, allow_empty: true }
         - { name: uart_device_type, type: int, min: 0, max: 7, optional: true, allow_empty: true }
 
-
-        # ===========================
-        # BLOQUES OPCIONALES AVANZADOS
-        # ===========================
-
-        # ---- Digital Fuel Sensor Data (ej. sensores digitales RS485/BLE) ----
-        - name: digital_fuel_count
-          type: int
-          min: 0
-          max: 8
-          optional: true
-
-        - name: digital_fuel_sensors
-          type: group_repeated
-          repeat: digital_fuel_count
-          optional: true
-          fields:
-            - { name: dfs_index, type: int, min: 0, max: 255 }
-            - { name: dfs_type, type: int, min: 0, max: 255, optional: true }
-            - { name: dfs_level_pct, type: float, min: 0, max: 100, optional: true }
-            - { name: dfs_temp_c, type: float, optional: true }
-            - { name: dfs_raw_hex, type: hex, max_length: 64, optional: true }
-
-        # ---- 1-Wire Data (iButton / Temp) ----
         - name: one_wire_device_number
           type: int
           min: 0
-          max: 19
+          max: 10
           optional: true
           default_if_absent: 0
-          present_if: { mask_field: eri_mask, bit: 1 }   # se muestra solo si el ERI Mask lo habilita
 
         - name: one_wire_devices
           type: group_repeated
           repeat: one_wire_device_number
           optional: true
-          enabled_if_any:
-            - { mask_field: eri_mask, bit: 1 }
           fields:
-            - { name: one_wire_device_id,   type: hex,   length_variant: [16] }
-            - { name: one_wire_device_type, type: int,   min: 1, max: 99, optional: true }   # 1 = temp sensor (DS18B20)
-            - { name: one_wire_device_data, type: hex,   max_length: 40, optional: true }    # crudo; para tipo 1 es complemento a dos
+            - { name: one_wire_device_id, type: hex, length_variant: [16], optional: true }
+            - { name: one_wire_device_type, type: int, min: 0, max: 255, optional: true }
+            - { name: one_wire_device_data, type: hex, max_length: 40, optional: true }
 
-
-        # ---- CAN Data (FMS/J1939/OBD-II vía adaptador externo) ----
-        - name: can_append_mask
-          type: hex
-          length_variant: [2, 4, 8]
-          optional: true
-
-        - name: can_engine_rpm
-          type: int
-          min: 0
-          max: 20000
-          optional: true
-          present_if: { mask_field: can_append_mask, bit: 0 }
-
-        - name: can_vehicle_speed_kmh
-          type: float
-          min: 0
-          max: 300
-          optional: true
-          present_if: { mask_field: can_append_mask, bit: 1 }
-
-        - name: can_fuel_level_pct
-          type: float
-          min: 0
-          max: 100
-          optional: true
-          present_if: { mask_field: can_append_mask, bit: 2 }
-
-        - name: can_total_fuel_used_l
-          type: float
-          min: 0
-          max: 1000000
-          optional: true
-          present_if: { mask_field: can_append_mask, bit: 3 }
-
-        - name: can_coolant_temp_c
-          type: float
-          optional: true
-          present_if: { mask_field: can_append_mask, bit: 4 }
-
-        - name: can_raw_hex
-          type: hex
-          max_length: 128
-          optional: true
-          present_if_any:
-            - { field_present: can_append_mask }
-
-        # ---- Fuel Sensor Data (analógico/voltaje) ----
-        - name: fuel_sensor_count
-          type: int
-          min: 0
-          max: 4
-          optional: true
-
-        - name: fuel_sensors
-          type: group_repeated
-          repeat: fuel_sensor_count
-          optional: true
-          fields:
-            - { name: fs_index, type: int, min: 0, max: 255 }
-            - { name: fs_voltage_mv, type: int, min: 0, max: 32000, optional: true }
-            - { name: fs_level_pct, type: float, min: 0, max: 100, optional: true }
-            - { name: fs_temp_c, type: float, optional: true }
-            - { name: fs_raw_hex, type: hex, max_length: 64, optional: true }
-
-        # ---- RF433 Accessory Data (ej. tags/mandos 433MHz) ----
-        - name: rf433_count
-          type: int
-          min: 0
-          max: 16
-          optional: true
-
-        - name: rf433_accessories
-          type: group_repeated
-          repeat: rf433_count
-          optional: true
-          fields:
-            - { name: rf433_type, type: int, min: 0, max: 255 }
-            - { name: rf433_id_hex, type: hex, length_variant: [4, 8, 12], optional: true }
-            - { name: rf433_event, type: int, min: 0, max: 255, optional: true }
-            - { name: rf433_rssi_dbm, type: int, min: -120, max: 0, optional: true }
-            - { name: rf433_raw_hex, type: hex, max_length: 64, optional: true }
 
         # ---- BLE (habilita bit 8 en eri_mask; mantenido) ----
         - name: ble_count

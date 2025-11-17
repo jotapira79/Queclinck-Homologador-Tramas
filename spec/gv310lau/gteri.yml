@@ -44,8 +44,8 @@ schema:
         - { name: speed_kmh, type: float, min: 0.0, max: 999.9 }
         - { name: azimuth_deg, type: int, min: 0, max: 359 }
         - { name: altitude_m, type: float, note: "(-)xxxxx.x" }
-        - { name: longitude_deg, type: float, note: "(-)xxx.xxxxxx" }
-        - { name: latitude_deg, type: float, note: "(-)xx.xxxxxx" }
+        - { name: lon, type: float, note: "(-)xxx.xxxxxx" }
+        - { name: lat, type: float, note: "(-)xx.xxxxxx" }
         - { name: gnss_utc_time, type: datetime, format: "YYYYMMDDHHMMSS" }
 
         # GSM
@@ -128,40 +128,18 @@ schema:
 
         # Bits 3/4: Fuel Sensor Data (se muestra si cualquiera de los dos está activo)
         - name: fuel_sensor_block
-          type: object
-          when:
-            anyOf:
-              - { mask: eri_mask, bit: 3 }
-              - { mask: eri_mask, bit: 4 }
-          properties:
-            sensor_number: { type: int, min: 0, max: 100 }
-            sensors:
-              type: array
-              items:
-                type: object
-                properties:
-                  type: { type: int, enum: [0,1,2,3,4,6,8,20,21,22] }
-                  percentage:
-                    type: float
-                    min: 0.0
-                    max: 100.0
-                    nullable: true
-                    when: { mask: eri_mask, bit: 3 }
-                  volume_l:
-                    type: float
-                    min: 0.0
-                    max: 6000.0
-                    nullable: true
-                    when: { mask: eri_mask, bit: 4 }
-                  fuel_temperature_c:
-                    type: int
-                    min: -40
-                    max: 85
-                    nullable: true
-                    when:
-                      allOf:
-                        - { mask: eri_mask, bit: 10 }
-                        - { anyOf: [ { field: type, equals: 2 }, { field: type, equals: 6 } ] }
+          type: group
+          optional: true
+          enabled_if_any:
+            - { mask_field: eri_mask, bit: 3 }
+            - { mask_field: eri_mask, bit: 4 }
+          fields:
+            - name: fuel_temperature_c
+              type: int
+              optional: true
+              present_if_any:
+                - { field: fuel_type, equals: 2 }
+                - { field: fuel_type, equals: 6 }
 
         # Bit 7: RF433 Accessory Data
         - name: rf433_block
@@ -332,6 +310,19 @@ schema:
 
     - name: tail
       fields:
+        - name: rat
+          type: int
+          min: 0
+          max: 255
+          optional: true
+
+        - name: band
+          type: string
+          max_length: 8
+          optional: true
+          enabled_if_any:
+            - { field_present: rat }
+
         - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS" }
         - { name: count_hex, type: hex, length: 4 }
 
@@ -408,8 +399,8 @@ examples:
       - header
       - imei
       - eri_mask
-      - longitude_deg
-      - latitude_deg
+      - lon
+      - lat
       - position_append_mask
       - sats_in_use
       - hdop

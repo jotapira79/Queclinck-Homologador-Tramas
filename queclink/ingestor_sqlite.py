@@ -179,6 +179,10 @@ class SQLiteIngestor:
     def ensure_table(self, model: str, message: str, spec: Optional[Spec] = None) -> Sequence[FieldSpec]:
         spec = spec or load_spec(model, message)
         fields = spec.fields
+        table_field_names = (spec.config or {}).get("table_fields") if hasattr(spec, "config") else None
+        if table_field_names:
+            field_map = {field.name: field for field in fields}
+            fields = [field_map[name] for name in table_field_names if name in field_map]
         table = spec.table_name
         conn = self.connection
 
