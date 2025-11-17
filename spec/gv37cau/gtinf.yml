@@ -91,18 +91,9 @@ schema:
           enum: [0, 1]
           description: "Estado LED (0 = apagado según config, 1 = encendido)"
 
-        - name: power_saving_mode
-          type: int
-          min: 0
-          max: 2
-          nullable: true
-          description: "Modo de ahorro de energía (0=off,1=light,2=deep); puede venir vacío."
+        - { name: reserved1, type: string, optional: true }
 
-        - name: external_gnss_antenna
-          type: int
-          enum: [0, 1]
-          nullable: true
-          description: "Estado de antena GNSS externa (0 = no detectada, 1 = conectada)."
+        - { name: reserved2, type: string, optional: true }
 
         
         # --- Última fix y entradas/salidas ---
@@ -121,12 +112,9 @@ schema:
           nullable: true
           description: "Lectura de entrada analógica 1 (mV)."
 
-        - name: analog_input2_mv
-          type: int
-          min: 0
-          max: 99999
-          nullable: true
-          description: "Lectura de entrada analógica 2 (mV)."
+        - { name: reserved3, type: string, optional: true }
+
+        - { name: reserved4, type: string, optional: true }
 
         - name: digital_input_status
           type: hex
