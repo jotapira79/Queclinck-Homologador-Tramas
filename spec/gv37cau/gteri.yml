@@ -1,0 +1,203 @@
+name: "GTERI"
+device: "GV37CAU"
+message_family: "ERI (Extended Report Information)"
+encoding: "ASCII"
+delimiter: ","
+terminator: "$"
+
+version_field:
+  name: full_protocol_version
+  length: 10
+  format: hex
+  example: "8020230100"
+
+schema:
+  sections:
+    - name: head
+      fields:
+        - { name: header, const_any: ["+RESP:GTERI", "+BUFF:GTERI"], type: string }
+        - { name: full_protocol_version, type: hex, length: 10, example: "8020230100" }
+        - { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$", example: "868487004398475" }
+        - { name: device_name, type: string, max_length: 20, pattern: "^[0-9A-Za-z_-]{1,20}$", example: "GV37CAU" }
+
+    - name: body
+      fields:
+        # --- Cabecera ERI ---
+        - name: eri_mask
+          type: hex
+          length: 8
+          example: "00000002"
+          description: >
+            ERI Mask. Si es distinto de 0x00000000 y hay periféricos presentes, el equipo
+            reporta GTERI en lugar de GTFRI. Controla qué bloques ERI se incluyen. 
+
+        - name: external_power_mv
+          type: int
+          min: 0
+          max: 32000
+          nullable: true
+          description: >
+            External Power Supply (mV). Si AT+GTEPS no está configurado para enviar tensión
+            con FRI/ERI, este campo viene vacío. 
+
+        - { name: report_type, type: string, length: 2, note: "X(1-6)Y(0-6) => Report ID/Type (igual que GTFRI)" }
+        - { name: number, type: int, min: 0, max: 1, description: "Número de puntos GPS en el reporte (normalmente 1)." }
+
+        # --- Posición GNSS ---
+        - { name: gnss_accuracy_level, type: int, min: 0, max: 50 }
+        - { name: speed_kmh, type: float, min: 0.0, max: 999.9 }
+        - { name: azimuth_deg, type: int, min: 0, max: 359 }
+        - { name: altitude_m, type: float, note: "(-)xxxxx.x (m)" }
+        - { name: longitude_deg, type: float, note: "(-)xxx.xxxxxx" }
+        - { name: latitude_deg, type: float, note: "(-)xx.xxxxxx" }
+
+        - name: gnss_utc_time
+          type: datetime
+          format: "YYYYMMDDHHMMSS"
+          tz: "UTC"
+          description: "GPS UTC Time; convertir externamente a hora oficial de Chile continental."
+
+        # --- GSM/Red servidora ---
+        - { name: mcc, type: string, pattern: "^0[0-9]{3}$", description: "0 + MCC (3 dígitos). Ej: 0730 para Chile (730)." }
+        - { name: mnc, type: string, pattern: "^0[0-9]{2,3}$" }
+        - { name: lac, type: hex, length: 4 }
+        - { name: cell_id, type: hex, length_variant: [4, 8] }
+
+        - { name: reserved1, type: string, nullable: true }
+
+        # --- Contadores y analógicas (estructura base igual a GTFRI) ---
+        - { name: mileage_km, type: float, min: 0.0, max: 4294967.0, description: "ODO Mileage." }
+        - name: hour_meter
+          type: string
+          # En GV350M se documenta HHHHH:MM:SS (11 chars). 
+          pattern: "^[0-9]{5}:[0-5][0-9]:[0-5][0-9]$"
+          nullable: true
+          example: "00010:23:45"
+          description: "Total Hour Meter Count (HHHHH:MM:SS). Si función deshabilitada, viene vacío."
+
+        - name: analog_input1_mv
+          type: int
+          min: 0
+          max: 32000
+          nullable: true
+          description: "Analog Input 1 (mV). Según configuración AT+GTAIS; puede venir vacío."
+
+        - { name: backup_batt_pct, type: int, min: 0, max: 100, nullable: true, description: "Backup Battery Percentage (0–100%)." }
+
+        - name: device_status
+          type: hex
+          length: 6
+          example: "210000"
+          description: >
+            Device Status. Los 2 dígitos altos = Motion State (11,12,16,1A,21,22,41,42),
+            los siguientes 2 = entradas, los últimos 2 = salidas. 
+
+        - { name: reserved2, type: string, nullable: true }
+
+        # --- Bloque 1-wire (opcional, controlado por ERI Mask bit1) ---
+        - name: onewire_device_count
+          type: int
+          min: 0
+          max: 8
+          nullable: true
+          when: { mask: eri_mask, bit: 1 }
+          description: >
+            Número de dispositivos 1-wire conectados (0–8). Si 0, no se muestran
+            los campos de ID/TYPE/DATA. 
+
+        - name: onewire_device_id
+          type: hex
+          max_length: 16
+          nullable: true
+          when: { mask: eri_mask, bit: 1 }
+          description: >
+            ID del primer dispositivo 1-wire (si <onewire_device_count> > 0). En el
+            protocolo original se repite ID/TYPE/DATA por cada dispositivo. 
+
+        - name: onewire_device_type
+          type: int
+          min: 0
+          max: 255
+          nullable: true
+          when: { mask: eri_mask, bit: 1 }
+          description: "Tipo de dispositivo 1-wire. 1 = Sensor de temperatura (según GV350M)."
+
+        - name: onewire_device_data_raw
+          type: hex
+          length: 4
+          nullable: true
+          when: { mask: eri_mask, bit: 1 }
+          description: >
+            DATA bruto (2 bytes) para el primer 1-wire. Para temperatura, valor_hex * 0.0625
+            => ºC; con signo en complemento a dos si bit de signo está activo. 
+
+        # --- Bloque Fuel Sensor (opcional, ERI Mask bits 3 y 4) ---
+        - name: fuel_sensor_count
+          type: int
+          min: 0
+          max: 99
+          nullable: true
+          description: "Número de sondas de combustible (0–99). Campo opcional."
+
+        - name: fuel_sensor_type
+          type: int
+          min: 0
+          max: 6
+          nullable: true
+          description: "Tipo de sensor de combustible (0–6) según tabla de Queclink (genérico)."
+
+        - { name: fuel_reserved, type: string, nullable: true }
+
+        - name: fuel_percentage
+          type: float
+          min: 0.0
+          max: 100.0
+          nullable: true
+          when: { mask: eri_mask, bit: 3 }
+          description: "Porcentaje de combustible (0–100). Visible si ERI Mask bit3=1."
+
+        - name: fuel_volume
+          type: float
+          min: 0.0
+          max: 10000.0
+          nullable: true
+          when: { mask: eri_mask, bit: 4 }
+          description: "Volumen de combustible (litros, 0–10000). Visible si ERI Mask bit4=1."
+
+    - name: tail
+      fields:
+        - name: send_time
+          type: datetime
+          format: "YYYYMMDDHHMMSS"
+          tz: "UTC"
+          description: "Send Time. Hora UTC de envío del reporte."
+
+        - { name: count_number, type: hex, length: 4, description: "Count Number 0000–FFFF." }
+        - { name: tail, const: "$", type: string, optional: true, default_if_absent: "$" }
+
+masks:
+  eri_mask:
+    size_bits: 32
+    bits:
+      0: { description: "Reservado" }
+      1: { description: "1-wire Data habilitado (bloque de sensores 1-wire en GTERI)." }
+      2: { description: "Reservado" }
+      3: { field: fuel_percentage, description: "Si =1, se reporta Percentage en bloque Fuel Sensor." }
+      4: { field: fuel_volume, description: "Si =1, se reporta Volume en bloque Fuel Sensor." }
+      5: { description: "Reservado" }
+      6: { description: "Reservado" }
+      7: { description: "Reservado / extensiones futuras (p.ej. BLE, CAN, según firmware)." }
+
+notes:
+  - "GTERI es el ERI Report configurado por AT+GTFRI. Cuando <ERI Mask> ≠ 0 y hay periféricos, el equipo envía +RESP/+BUFF:GTERI en lugar de GTFRI. "
+  - "La parte inicial de GTERI (hasta Device Status) tiene el mismo orden que GTFRI en GV350M: ERI Mask, External Power, Report ID/Type, Number, posición GNSS, MCC/MNC/LAC/CellID, Mileage, Hour Meter, AI1, Backup Battery, Device Status. "
+  - "El bloque 1-wire (Device Count, ID, TYPE, DATA) es opcional y su presencia está controlada por ERI Mask bit1; si hay varios dispositivos, el protocolo concatena tripletas ID/TYPE/DATA, pero este YML sólo modela explícitamente el primero, dejando el resto para parsing posterior si se requiere normalización avanzada. "
+  - "El bloque Fuel Sensor (count, type, % y volumen) es opcional y está gobernado por ERI Mask bits 3 y 4, que habilitan los campos <Percentage> y <Volume> respectivamente. "
+  - "GNSS UTC Time y Send Time siempre están en UTC y deben convertirse a horario oficial de Chile continental (con DST) en tu pipeline."
+
+examples:
+  raw_frames:
+    # Ejemplo sintético con 1-wire + Fuel (estructura acorde a GV350M; datos ficticios adaptados a GV37CAU)
+    - "+RESP:GTERI,8020230100,868487004398475,GV37CAU,0000000A,12000,11,1,10,64.0,180,50.0,-70.654321,-33.456789,20250314094500,0730,0001,1A2B,3C4D,,12345.6,00010:23:45,12000,80,210100,,1,28FF1234567890AB,1,00FA,1,2,,75.0,350.0,20250314094503,00AF$"
+    # Ejemplo sintético sin periféricos (eri_mask=0, equivalente a un GTFRI ampliado)
+    - "+BUFF:GTERI,8020230100,868487004398475,GV37CAU,00000000,12000,11,1,10,30.0,90,20.0,-70.700000,-33.400000,20250314100000,0730,0001,1A2B,3C4D,,12346.0,,,12000,79,210000,,,,0,0,,0.0,0.0,20250314100002,00B0$"
