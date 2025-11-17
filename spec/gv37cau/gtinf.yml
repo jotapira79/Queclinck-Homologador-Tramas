@@ -68,7 +68,7 @@ schema:
           nullable: true
           description: "Voltaje fuente externa (mV). Campo puede venir vacío si no aplica."
 
-        - { name: reserved1, type: number, nullable: true }
+        - { name: network_type, type: int, enum: [0,1,2,3] }            # 0=unreg,1=EGPRS,2=WCDMA,3=LTE
 
         - name: backup_batt_voltage_v
           type: float
@@ -87,14 +87,11 @@ schema:
           enum: [0, 1]
           description: "Estado LED (0 = apagado según config, 1 = encendido)"
 
+        - { name: reserved1, type: number, nullable: true }
+        
         - { name: reserved2, type: number, nullable: true }
 
-        - name: external_gnss_antenna
-          type: int
-          enum: [0, 1, 3]
-          nullable: true
-          description: "Estado antena GNSS externa (0=interna/normal, 1=externa OK, 3=falla/open/short)"
-
+        
         # --- Última fix y entradas/salidas ---
         - name: last_fix_utc_time
           type: datetime
@@ -102,14 +99,9 @@ schema:
           tz: "UTC"
           description: "Hora UTC de la última fix GNSS conocida"
 
-        - { name: reserved3, type: number, nullable: true }
+        - { name: pin_mask, type: hex, length_variant: [1,2] }
 
-        - name: analog_input_vcc_mv
-          type: int
-          min: 0
-          max: 30000
-          nullable: true
-          description: "Analog Input VCC (mV). En GV3xx se documenta como 0–30000 mV."
+        - { name: reserved3, type: number, nullable: true }
 
         - { name: reserved4, type: number, nullable: true }
 
