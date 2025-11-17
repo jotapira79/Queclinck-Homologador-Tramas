@@ -1,0 +1,127 @@
+name: "+RESP:GTFRI"
+device: "GV37CAU"
+message_family: "FRI (Fixed Report Information)"
+encoding: "ASCII"
+delimiter: ","
+terminator: "$"
+
+# --- Configuración/Features para compatibilidad ---
+config:
+  # Comentario informativo: en GV37CAU el Position Append Mask sólo documenta explícitamente
+  # el bit 0 para "Satellites in Use". Otros campos opcionales (p.ej. GNSS Trigger Type)
+  # dependen de la configuración AT+GTFRI (ERI Mask) y pueden venir vacíos.
+  position_append_mask_bits: "bit0=sats_in_use; otros reservados según manual"
+
+version_field:
+  name: full_protocol_version
+  length: 10
+  format: hex
+  example: "8020230100"
+
+schema:
+  sections:
+    - name: head
+      fields:
+        - { name: header, const_any: ["+RESP:GTFRI", "+BUFF:GTFRI"], type: string }
+        - { name: full_protocol_version, type: hex, length: 10, example: "8020230100" }
+        - { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$", example: "868487004398475" }
+        - { name: device_name, type: string, max_length: 20, pattern: "^[0-9A-Za-z_-]{1,20}$", example: "GV37CAU" }
+
+    - name: body
+      fields:
+        # --- Cabecera de cuerpo (sin ERI) ---
+        - name: external_power_mv
+          type: int
+          min: 0
+          max: 99999
+          nullable: true
+          description: "External Power Voltage (mV). Si AT+GTEPS no está configurado, este campo viene vacío."
+
+        - { name: report_type, type: string, length: 2, note: "X(1-5)Y(0-6) => Report ID/Type (1 byte HEX representado en ASCII)" }
+        - { name: number, type: int, min: 1, max: 15, description: "Número de puntos (multi-point) o secuencia" }
+
+        # --- Posición ---
+        - { name: gnss_accuracy_level, type: int, min: 0, max: 50 }
+        - { name: speed_kmh, type: float, min: 0.0, max: 999.9 }
+        - { name: azimuth_deg, type: int, min: 0, max: 359 }
+        - { name: altitude_m, type: float, note: "(-)xxxxx.x (m)" }
+        - { name: longitude_deg, type: float, note: "(-)xxx.xxxxxx" }
+        - { name: latitude_deg, type: float, note: "(-)xx.xxxxxx" }
+        - { name: gnss_utc_time, type: datetime, format: "YYYYMMDDHHMMSS", tz: "UTC" }
+
+        # --- GSM/Red servidora ---
+        - { name: mcc, type: string, pattern: "^0[0-9]{3}$" }          # 0XXX
+        - { name: mnc, type: string, pattern: "^0[0-9]{2,3}$" }        # 0XX/0XXX
+        - { name: lac, type: hex, length: 4 }
+        - { name: cell_id, type: hex, length_variant: [4, 8] }
+
+        # --- Position Append Mask (1 byte) y campos dependientes ---
+        - { name: position_append_mask, type: hex, length: 2, example: "01" }
+
+        # Sólo se documenta explícitamente bit 0 para satélites.
+        - name: sats_in_use
+          type: int
+          min: 0
+          max: 72
+          when: { mask: position_append_mask, bit: 0 }
+          description: "Número de satélites GNSS en uso (si bit0 de position_append_mask = 1)."
+
+        # GNSS Trigger Type viene documentado como opcional (controlado por ERI Mask en AT+GTFRI).
+        # Aquí se asume que ocupa esta posición y puede venir vacío.
+        - name: gnss_trigger_type
+          type: int
+          min: 0
+          max: 4
+          nullable: true
+          description: >
+            Tipo de disparo del punto GNSS (0=Time, 1=Corner, 2=Distance, 3=Mileage, 4=Optimum).
+            Puede venir vacío si la función no está habilitada en ERI Mask.
+
+        # --- Contadores y entradas analógicas ---
+        - { name: mileage_km, type: float, min: 0.0, max: 4294967.0, description: "Current Mileage, incluido en cada posición" }
+        - { name: hour_meter, type: string, pattern: "^[0-9]{7}:[0-5][0-9]:[0-5][0-9]$", example: "0000102:34:33", description: "Total Hour Meter Count (HHHHHHH:MM:SS)" }
+
+        - name: analog_input1_mv
+          type: int
+          min: 0
+          max: 16000
+          nullable: true
+          description: "Analog Input 1 (mV). Según configuración de entrada analógica."
+
+        - { name: reserved1, type: number, nullable: true }
+        - { name: reserved2, type: number, nullable: true }
+
+        - { name: backup_batt_pct, type: int, min: 0, max: 100, nullable: true }
+
+        - { name: device_status, type: hex, length: 6, example: "210000", description: "Device Status (bitmask de estado del equipo)" }
+
+        - { name: reserved3, type: number, nullable: true }
+        - { name: reserved4, type: number, nullable: true }
+        - { name: reserved5, type: number, nullable: true }
+
+    - name: tail
+      fields:
+        - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS", tz: "UTC" }
+        - { name: count_number, type: hex, length: 4 }
+        - { name: tail, const: "$", type: string, optional: true, default_if_absent: "$" }
+
+masks:
+  position_append_mask:
+    size_bits: 8
+    bits:
+      0: { field: sats_in_use, description: "Satellites in Use" }
+      # Bits 1-7 se dejan sin mapear en este esquema; reservados para futuras extensiones
+      # (p.ej. RAT/Band data u otros campos controlados por AT+GTFRI/ERI).
+
+notes:
+  - "Formato de cabecera: Header '+RESP:GTFRI' / '+BUFF:GTFRI', Full Protocol Version (10 dígitos HEX), IMEI, Device Name."
+  - "External Power Voltage se expresa en mV (0-99999). Si AT+GTEPS no está configurado para sincronizar con FRI, el campo viene vacío."
+  - "GNSS Trigger Type es opcional y su presencia/uso depende de ERI Mask en AT+GTFRI (0=Time, 1=Corner, 2=Distance, 3=Mileage, 4=Optimum)."
+  - "Si se habilita +RESP:GTERI mediante ERI Mask, el equipo enviará GTERI en lugar de GTFRI para los reportes fijos."
+  - "GNSS UTC Time y Send Time están en UTC y deben convertirse a horario oficial de Chile continental en la aplicación, respetando DST."
+  - "Los campos Reserved se dejan como numéricos anulables para mantener compatibilidad en futuras versiones de firmware del GV37CAU."
+
+examples:
+  raw_frames:
+    # Ejemplo sintético sólo para validar formato general (no corresponde a un log real).
+    - "+RESP:GTFRI,8020230100,868487004398475,GV37CAU,12000,11,1,5,60.0,180,50.0,117.129417,31.839262,20250307030323,0460,0001,DF5C,027A4F1F,01,12,12345.6,0000012:34:56,12000,0,0,80,210100,0,0,0,20250307030325,00AF$"
