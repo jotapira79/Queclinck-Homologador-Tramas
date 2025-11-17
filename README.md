@@ -1,9 +1,9 @@
 # Queclinck-Homlogador-Tramas
 
 Herramientas para homologar y analizar tramas Queclink (`GTINF, GTERI, GTFRI y GTJDS`) de los
-modelos GV310LAU, GV58LAU, GV75LAU y GV350CEU. Permite convertir archivos de texto/CSV/XLSX a una base de
-datos SQLite y, a partir de ella, generar mapas diarios con los recorridos diferenciando entre
-reportes buffer y no buffer.
+modelos GV310LAU, GV58LAU, GV75LAU, GV350CEU y GV37CAU. Permite convertir archivos de
+texto/CSV/XLSX a una base de datos SQLite y, a partir de ella, generar mapas diarios con los
+recorridos diferenciando entre reportes buffer y no buffer.
 
 ## Requisitos
 
@@ -42,6 +42,7 @@ el nombre de equipo reportado en la trama:
 - `86252406` → **GV350CEU**
 - `86631406` → **GV58LAU** (si el cuarto campo no indica otro modelo)
 - `86631406` + `device_name=GV75LAU` → **GV75LAU**
+- `86848700` → **GV37CAU** (o `device_name=GV37CAU` cuando el IMEI no viene completo)
 
 Si los identificadores no corresponden a un modelo soportado se omite la trama y se deja un log de
 advertencia detallando el IMEI y el `device_name` recibido.
@@ -68,7 +69,7 @@ Las bases de datos GTERI / GTFRI y GTINF deben estar en la carpeta `bases_sqlite
 deberían estar con los siguientes nombres `gteri_<modelo>.db`, `gtfri_<modelo>.db` o `gtinf_<modelo>.db`
 (ej: `gteri_gv310lau.db`). Para el equipo **GV75LAU** (que reporta recorridos vía `GTFRI`) asegúrate
 de contar con `gtfri_gv75lau.db` y `gtinf_gv75lau.db` (o sus variantes `_map.db` si ya fueron
-generadas). Actualmente se soportan los modelos GV310LAU, GV58LAU, GV75LAU y GV350CEU.
+generadas). Actualmente se soportan los modelos GV310LAU, GV58LAU, GV75LAU, GV350CEU y GV37CAU.
 
 El proceso agrega/actualiza las columnas `tecnologia_celular`, `calidad_senal`,
 `nivel_senal_dbm` y `operador`, rellenándolas con la mejor medición `GTINF` disponible para cada
