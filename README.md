@@ -1,7 +1,7 @@
 # Queclinck-Homlogador-Tramas
 
 Herramientas para homologar y analizar tramas Queclink (`GTINF, GTERI, GTFRI y GTJDS`) de los
-modelos GV310LAU, GV58LAU, GV75LAU, GV350CEU y GV37CAU. Permite convertir archivos de
+modelos GV310LAU, GV58LAU, GV350CEU y GV37CAU. Permite convertir archivos de
 texto/CSV/XLSX a una base de datos SQLite y, a partir de ella, generar mapas diarios con los
 recorridos diferenciando entre reportes buffer y no buffer.
 
@@ -43,7 +43,6 @@ el nombre de equipo reportado en la trama:
 - `86858906` → **GV310LAU**
 - `86252406` → **GV350CEU**
 - `86631406` → **GV58LAU** (si el cuarto campo no indica otro modelo)
-- `86631406` + `device_name=GV75LAU` → **GV75LAU**
 - `86848700` → **GV37CAU** (o `device_name=GV37CAU` cuando el IMEI no viene completo)
 
 Si los identificadores no corresponden a un modelo soportado se omite la trama y se deja un log de
