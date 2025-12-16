@@ -5,196 +5,123 @@ encoding: "ASCII"
 delimiter: ","
 terminator: "$"
 
-# --- Compatibilidad / features ---
-
 config:
-
-# ERI Mask decide si se reporta GTERI en lugar de GTFRI cuando hay periféricos
-
-# y controla bloques/campos opcionales (p.ej. RAT/Band Data).
-
-# Para GV30CAU el documento menciona explícitamente:
-
-# - bit15 => incluye <RAT and Band Data> en +RESP:GTERI (Optional)
-
-eri_mask_bits: "bit15=rat_band_data; otros bits reservados/periféricos según configuración"
+  eri_mask_bits: "bit15=rat_band_data; otros bits reservados/periféricos según configuración"
 
 version_field:
-name: full_protocol_version
-length: 10
-format: hex
-example: "8020210100"
+  name: full_protocol_version
+  length: 10
+  format: hex
+  example: "8020210100"
 
 schema:
-sections:
-- name: head
-fields:
-- { name: header, const_any: ["+RESP:GTERI", "+BUFF:GTERI"], type: string }
-- { name: full_protocol_version, type: hex, length: 10, example: "8020210100" }
-- { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$", example: "868487004398475" }
-- { name: device_name, type: string, max_length: 20, pattern: "^[0-9A-Za-z_-]{1,20}$", example: "GV30CAU" }
+  sections:
+    - name: head
+      fields:
+        - { name: header, const_any: ["+RESP:GTERI", "+BUFF:GTERI"], type: string }
+        - { name: full_protocol_version, type: hex, length: 10, example: "8020210100" }
+        - { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$", example: "868487004398475" }
+        - { name: device_name, type: string, max_length: 20, pattern: "^[0-9A-Za-z_-]{1,20}$", example: "GV30CAU" }
 
-```
-- name: body
-  fields:
-    # --- Cabecera ERI ---
-    - name: eri_mask
-      type: hex
-      length: 8
-      example: "00008000"
-      description: >
-        ERI Mask (32 bits, representado como 8 HEX ASCII).
-        Si el equipo tiene periféricos y el bit correspondiente está en 1, reporta GTERI en vez de GTFRI.
+    - name: body
+      fields:
+        # --- Cabecera ERI ---
+        - name: eri_mask
+          type: hex
+          length: 8
+          example: "00008000"
+        - name: external_power_mv
+          type: int
+          min: 0
+          max: 99999
+          nullable: true
+        - { name: report_id_report_type, type: string, length: 2 }
+        - { name: number, type: int, min: 1, max: 15 }
 
-    - name: external_power_mv
-      type: int
-      min: 0
-      max: 99999
-      nullable: true
-      description: "External Power Voltage (mV). Puede venir vacío (coma-coma) según config."
+        # --- Posición GNSS ---
+        - { name: gnss_accuracy_level, type: int, min: 0, max: 50 }
+        - { name: speed_kmh, type: float, min: 0.0, max: 999.9 }
+        - { name: azimuth_deg, type: int, min: 0, max: 359 }
+        - { name: altitude_m, type: float, nullable: true }
+        - { name: longitude_deg, type: float, nullable: true }
+        - { name: latitude_deg, type: float, nullable: true }
+        - { name: gnss_utc_time, type: datetime, format: "YYYYMMDDHHMMSS", tz: "UTC" }
 
-    - name: report_id_report_type
-      type: string
-      length: 2
-      description: "Report ID / Report Type (2 caracteres)."
+        # --- GSM/Red ---
+        - { name: mcc, type: string, pattern: "^0[0-9]{3}$" }
+        - { name: mnc, type: string, pattern: "^0[0-9]{3}$" }
+        - { name: lac, type: hex, length: 4 }
+        - { name: cell_id, type: hex, length_variant: [4, 8] }
 
-    - name: number
-      type: int
-      min: 1
-      max: 15
-      description: "Número de puntos (normalmente 1)."
+        # --- Position Append Mask ---
+        - { name: position_append_mask, type: hex, length: 2, example: "01" }
+        - name: sats_in_use
+          type: int
+          min: 0
+          max: 72
+          nullable: true
+          when: { mask: position_append_mask, bit: 0 }
+        - name: gnss_trigger_type
+          type: int
+          min: 0
+          max: 4
+          nullable: true
+          optional: true
+          when: { mask: position_append_mask, bit: 1 }
 
-    # --- Posición GNSS ---
-    - { name: gnss_accuracy_level, type: int, min: 0, max: 50 }
-    - { name: speed_kmh, type: float, min: 0.0, max: 999.9 }
-    - { name: azimuth_deg, type: int, min: 0, max: 359 }
-    - { name: altitude_m, type: float, nullable: true, note: "(-)xxxxx.x (m)" }
-    - { name: longitude_deg, type: float, nullable: true, note: "(-)xxx.xxxxxx" }
-    - { name: latitude_deg, type: float, nullable: true, note: "(-)xx.xxxxxx" }
+        # --- Contadores / hour meter / CSQ ---
+        - { name: total_mileage_km, type: float, min: 0.0, max: 4294967.0 }
+        - name: current_hour_meter_hhmmss
+          type: string
+          nullable: true
+          pattern: "^[0-9]{6}$"
+        - name: total_hour_meter
+          type: string
+          nullable: true
+          pattern: "^[0-9]{5,7}:[0-5][0-9]:[0-5][0-9]$"
+        - name: analog_input1_mv
+          type: int
+          min: 0
+          max: 16000
+          nullable: true
+        - { name: reserved1, type: number, nullable: true }
+        - { name: backup_batt_pct, type: int, min: 0, max: 100, nullable: true, optional: true }
 
-    - name: gnss_utc_time
-      type: datetime
-      format: "YYYYMMDDHHMMSS"
-      tz: "UTC"
-      description: "GNSS UTC Time."
+        # --- Estado equipo ---
+        - { name: device_status, type: hex, length: 6, example: "210100" }
+        - { name: reserved2, type: string, nullable: true, optional: true }
 
-    # --- GSM/Red ---
-    - { name: mcc, type: string, pattern: "^0[0-9]{3}$", description: "0XXX" }
-    - { name: mnc, type: string, pattern: "^0[0-9]{3}$", description: "0XXX" }
-    - { name: lac, type: hex, length: 4 }
-    - { name: cell_id, type: hex, length_variant: [4, 8] }
+        # --- RAT / Band data (Optional, ERI Mask bit15) ---
+        - name: rat
+          type: int
+          min: 0
+          max: 4
+          nullable: true
+          optional: true
+          when: { mask: eri_mask, bit: 15 }
+        - name: band
+          type: int
+          min: 0
+          max: 1900
+          nullable: true
+          optional: true
+          when: { mask: eri_mask, bit: 15 }
+        - { name: reserved3, type: string, nullable: true, optional: true }
+        - { name: reserved4, type: string, nullable: true, optional: true }
 
-    # --- Position Append Mask (igual semántica que GTFRI) ---
-    - name: position_append_mask
-      type: hex
-      length: 2
-      example: "01"
-      description: >
-       Position Append Mask (1 byte).
-       Define la presencia de campos opcionales posteriores:
-       bit0 = Satellites in Use
-       bit1 = GNSS Trigger Type
-
-    - name: sats_in_use
-      type: int
-      min: 0
-      max: 72
-      nullable: true
-      when: { mask: position_append_mask, bit: 0 }
-      description: "Número de satélites GNSS en uso (si bit0 = 1)."
-
-    - name: gnss_trigger_type
-      type: int
-      min: 0
-      max: 4
-      nullable: true
-      optional: true
-      when: { mask: position_append_mask, bit: 1 }
-      description: >
-       GNSS Trigger Type (Optional).
-       0=Time, 1=Corner, 2=Distance, 3=Mileage, 4=Optimum.
-       Solo presente si bit1 del Position Append Mask = 1.
-
-    # --- Contadores / hour meter / CSQ ---
-    - name: total_mileage_km
-      type: float
-      min: 0.0
-      max: 4294967.0
-      description: "Total Mileage (km)."
-
-    - name: current_hour_meter_hhmmss
-      type: string
-      nullable: true
-      pattern: "^[0-9]{6}$"
-      example: "102334"
-      description: "Current Hour Meter Count (HHMMSS). Si no aplica, vacío."
-
-    - name: total_hour_meter
-      type: string
-      nullable: true
-      pattern: "^[0-9]{5,7}:[0-5][0-9]:[0-5][0-9]$"
-      example: "0000102:34:33"
-      description: >
-        Total Hour Meter Count (HHHHH-HHHHHHH:MM:SS). Si la función está deshabilitada, vacío.
-
-    - name: analog_input1_mv type: int min: 0 max: 16000 nullable: true description: "Analog Input 1 (mV)." 
-    - { name: reserved1, type: number, nullable: true, description: "Reserved (documentado como 0 / vacío)." } 
-    - { name: reserved2, type: number, nullable: true, description: "Reserved (documentado como 0 / vacío)." }
-
-    - name: backup_batt_pct type: int min: 0 max: 100 nullable: true description: "Backup Battery Percentage (0-100)."
-
-    # --- Estado equipo ---
-    - name: device_status
-      type: hex
-      length: 6
-      example: "210100"
-      description: "Device Status (Motion/Input/Output en 6 HEX)."
-
-    - { name: reserved3, type: string, nullable: true, description: "Reserved (puede venir vacío)." }
-
-    # --- RAT / Band data (Optional, controlado por ERI Mask bit15) ---
-    - name: rat
-      type: int
-      min: 0
-      max: 4
-      nullable: true
-      optional: true
-      when: { mask: eri_mask, bit: 15 }
-      description: "RAT (0=No Service, 1=EGPRS, 4=LTE Cat1). Se incluye si ERI Mask bit15=1."
-
-    - name: band
-      type: int
-      min: 0
-      max: 1900
-      nullable: true
-      optional: true
-      when: { mask: eri_mask, bit: 15 }
-      description: "Band (LTE band o GSM band según RAT). Se incluye si ERI Mask bit15=1."
-
-- name: tail
-  fields:
-    - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS", tz: "UTC" }
-    - { name: count_number, type: hex, length: 4 }
-    - { name: tail, const: "$", type: string, optional: true, default_if_absent: "$" }
-```
+    - name: tail
+      fields:
+        - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS", tz: "UTC" }
+        - { name: count_number, type: hex, length: 4 }
+        - { name: tail, const: "$", type: string, optional: true, default_if_absent: "$" }
 
 masks:
-eri_mask:
-size_bits: 32
-bits:
-15: { field: rat, description: "Incluye <RAT and Band Data> (Optional) en +RESP/+BUFF:GTERI." }
-
-notes:
-
-* "Cuando el equipo está conectado a periféricos y el bit correspondiente en ERI Mask está en 1, el equipo reporta +RESP:GTERI en vez de +RESP:GTFRI."
-* "En GV30CAU se documenta explícitamente el uso de ERI Mask bit15 para habilitar el bloque opcional <RAT and Band Data>."
-* "El campo posterior a Cell ID es 'Reserved | GNSS Trigger Type(Optional)' y puede venir '00' o vacío; si viene 0-4 representa tipo de disparo."
-* "Total Hour Meter Count: si se habilita el hour meter, el total se reporta como H(5..7):MM:SS; si se deshabilita, el campo viene vacío."
-* "Los timestamps GNSS UTC Time y Send Time están en UTC y deben convertirse a horario oficial de Chile continental en tu aplicación (considerando DST)."
+  eri_mask:
+    size_bits: 32
+    bits:
+      15: { field: rat, description: "Incluye <RAT and Band Data> en +RESP/+BUFF:GTERI." }
 
 examples:
-raw_frames:
-# Ejemplo oficial (ASCII) del documento GV30CAU:
-- "+RESP:GTERI,8020210100,868487004398475,GV30CAU,00008000,,10,1,1,0.0,183,151.1,117.129417,31.839262,20250307030112,0460,0001,DF5C,027A4F1F,00,13.6,,,,,,210100,,4,3,20250307030112,0ACC$"
-# Ejemplo sintético +BUFF con RAT/Band omitidos (si bit15=0 o campos vacíos):
-- "+BUFF:GTERI,8020210100,868487004398475,GV30CAU,00000000,12000,10,1,5,60.0,180,50.0,117.129417,31.839262,20250307030323,0460,0001,DF5C,027A4F1F,00,12345.6,000000,0000012:34:56,28,0,210100,,,,20250307030325,00AF$"
+  raw_frames:
+    - "+RESP:GTERI,8020210100,868487004398475,GV30CAU,00008000,,10,1,1,0.0,183,151.1,117.129417,31.839262,20250307030112,0460,0001,DF5C,027A4F1F,00,13.6,,,,,,210100,,4,3,20250307030112,0ACC$"
+    - "+BUFF:GTERI,8020210100,868487004398475,GV30CAU,00000000,12000,10,1,5,60.0,180,50.0,117.129417,31.839262,20250307030323,0460,0001,DF5C,027A4F1F,00,12345.6,000000,0000012:34:56,28,0,210100,,,,20250307030325,00AF$"

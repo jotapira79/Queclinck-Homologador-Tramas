@@ -9,7 +9,7 @@ version_field:
   name: full_protocol_version
   length: 10
   format: hex
- example: "8020210200" # Ejemplo visto en reportes GV30CAU del protocolo
+  example: "8020210200"
 
 schema:
   sections:
@@ -23,128 +23,47 @@ schema:
           max_length: 20
           pattern: "^[0-9A-Za-z_-]{0,20}$"
           nullable: true
-          description: "Device Name configurado; puede venir vacío."
 
     - name: body
       fields:
-        # --- Estado y SIM/GSM ---
         - name: motion_status
           type: hex
           length: 2
-          description: "Estado de movimiento actual (11,12,16,1A,21,22,41,42)."
-          enum:
-            "11": "Ignition Off Rest"
-            "12": "Ignition Off Motion"
-            "16": "Tow"
-            "1A": "Fake Tow"
-            "21": "Ignition On Rest"
-            "22": "Ignition On Motion"
-            "41": "Sensor Rest (sin ignición)"
-            "42": "Sensor Motion (sin ignición)"
-
         - name: iccid
           type: string
           length: 20
           pattern: "^[0-9A-Za-z]{20}$"
-          description: "ICCID de la SIM."
-
-        - name: csq_rssi_rsrp
-          type: int
-          min: 0
-          max: 255
-          description: "CSQ RSSI/RSRP (2G/3G: 0–31 o 99; LTE: 0–97 o 255)."
-
-        - name: csq_ber
-          type: int
-          min: 0
-          max: 99
-          description: "CSQ BER (0–7; 99 = desconocido)."
-
-        # --- Alimentación / red / batería ---
-        - name: external_power_supply
-          type: int
-          enum: [0, 1]
-          description: "Fuente externa conectada (0=no, 1=sí)."
-
-        - name: external_power_voltage_mv
-          type: int
-          min: 0
-          max: 99999
-          nullable: true
-          description: "Voltaje fuente externa (mV). Puede venir vacío si no aplica."
-
-        - name: network_type
-          type: int
-          enum: [0, 1, 2, 3]
-          nullable: true
-          description: "Tipo de red (0=Unregistered, 1=EGPRS, 2=Reserved, 3=LTE)."
-
-        - name: backup_battery_voltage_v
-          type: float
-          min: 0.00
-          max: 4.50
-          nullable: true
-          description: "Voltaje batería de respaldo (V)."
-
-        - name: charging
-          type: int
-          enum: [0, 1]
-          description: "Batería cargando (0=no, 1=sí)."
-
-        - name: led_state
-          type: int
-          enum: [0, 1]
-          description: "Estado LEDs (0=todos apagados, 1=alguno encendido)."
-
-        - { name: reserved1, type: string, optional: true, description: "Reservado (puede venir vacío)." }
-        - { name: reserved2, type: string, optional: true, description: "Reservado (puede venir vacío)." }
-
-        # --- Última fix + IO ---
+        - { name: csq_rssi_rsrp, type: int, min: 0, max: 255 }
+        - { name: csq_ber, type: int, min: 0, max: 99 }
+        - { name: external_power_supply, type: int, enum: [0, 1] }
+        - { name: external_power_voltage_mv, type: int, min: 0, max: 99999, nullable: true }
+        - { name: network_type, type: int, enum: [0, 1, 2, 3], nullable: true }
+        - { name: backup_battery_voltage_v, type: float, min: 0.0, max: 4.5, nullable: true }
+        - { name: charging, type: int, enum: [0, 1] }
+        - { name: led_state, type: int, enum: [0, 1] }
+        - { name: reserved1, type: string, optional: true }
+        - { name: reserved2, type: string, optional: true }
         - name: last_fix_utc_time
           type: datetime
           format: "YYYYMMDDHHMMSS"
           tz: "UTC"
-          description: "UTC de la última fix GNSS exitosa."
-
         - name: pin_mask
           type: hex
           length_variant: [1, 2]
-          description: "Modo de trabajo actual de pines (Pin Mask)."
-
-        - name: analog_input_vcc1_mv
-          type: int
-          min: 0
-          max: 16000
-          nullable: true
-          description: "Lectura de Analog Input VCC1 (mV)."
-
-        - { name: reserved3, type: string, optional: true, description: "Reservado (puede venir vacío)." }
-        - { name: reserved4, type: string, optional: true, description: "Reservado (puede venir vacío)." }
-
+        - { name: analog_input_vcc1_mv, type: int, min: 0, max: 16000, nullable: true }
+        - { name: reserved3, type: string, optional: true }
+        - { name: reserved4, type: string, optional: true }
         - name: digital_input
           type: hex
           length_variant: [1, 2]
-          pattern: "^[0-9A-Fa-f]{1,2}$"
-          description: "Estado de entradas digitales (bitwise hex). Rango típico 00–03."
-
         - name: digital_output
           type: hex
           length_variant: [1, 2]
-          pattern: "^[0-9A-Fa-f]{1,2}$"
-          description: "Estado de salidas digitales (bitwise hex). Rango típico 00–01."
-
-        # --- Zona horaria ---
         - name: time_zone_offset
           type: string
           length: 5
           pattern: "^[+-][0-1][0-9][0-5][0-9]$"
-          example: "+0000"
-          description: "Offset local respecto de UTC (+/-HHMM)."
-
-        - name: daylight_saving
-          type: int
-          enum: [0, 1]
-          description: "Horario de verano (0=deshabilitado, 1=habilitado)."
+        - { name: daylight_saving, type: int, enum: [0, 1] }
 
     - name: tail
       fields:
@@ -152,20 +71,9 @@ schema:
           type: datetime
           format: "YYYYMMDDHHMMSS"
           tz: "UTC"
-          description: "Hora UTC en que se generó el reporte."
-        - name: count_number
-          type: hex
-          length: 4
-          description: "Secuencia 0000–FFFF."
+        - { name: count_number, type: hex, length: 4 }
         - { name: tail, const: "$", type: string, optional: true, default_if_absent: "$" }
-
-notes:
-  - "El orden de campos de +RESP/+BUFF:GTINF para GV30CAU incluye Motion Status, ICCID, CSQ RSSI/RSRP, CSQ BER, External Power Supply/Voltage, Network Type, Backup Battery Voltage, Charging, LED State, 2 reservados, Last Fix UTC Time, Pin Mask, Analog Input VCC1, 2 reservados, Digital Input, Digital Output, Time Zone Offset, Daylight Saving, Send Time y Count Number." # :contentReference[oaicite:3]{index=3} :contentReference[oaicite:4]{index=4}
-  - "Motion Status usa los códigos 11,12,16,1A,21,22,41,42 para reposo/movimiento e ignición/sensor." # :contentReference[oaicite:5]{index=5}
-  - "External Power Supply: 0 no conectado, 1 conectado; Network Type: 0 Unregistered, 1 EGPRS, 2 Reserved, 3 LTE." # :contentReference[oaicite:6]{index=6}
-  - "Last Fix UTC Time y Send Time vienen en UTC (YYYYMMDDHHMMSS) y deben convertirse a horario oficial de Chile continental en tu aplicación según corresponda." # :contentReference[oaicite:7]{index=7} :contentReference[oaicite:8]{index=8}
 
 examples:
   raw_frames:
-    # Ejemplo sintético (estructura/orden validado; valores ilustrativos)
     - "+RESP:GTINF,8020210200,868487004398475,GV30CAU,21,898600810906F8048812,28,0,1,12346,3,4.20,0,1,, ,20250314090748,03,12000,, ,03,01,+0000,0,20250314090751,0999$"
