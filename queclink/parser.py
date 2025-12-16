@@ -20,6 +20,7 @@ _MODEL_PREFIXES = {
     "86631406": "gv58lau",
     "86858906": "gv310lau",
     "86252406": "gv350ceu",
+    "868487004": "gv30cau",
     "86848700": "gv37cau",
 }
 
@@ -28,6 +29,7 @@ _DEVICE_NAME_MODELS = {
     "GV310LAU": "gv310lau",
     "GV350CEU": "gv350ceu",
     "GV75LAU": "gv75lau",
+    "GV30CAU": "gv30cau",
     "GV37CAU": "gv37cau",
 }
 
@@ -249,8 +251,14 @@ def model_from_imei(imei: str) -> Optional[str]:
     digits = "".join(ch for ch in str(imei) if ch.isdigit())
     if len(digits) < 8:
         return None
-    prefix = digits[:8]
-    return _MODEL_PREFIXES.get(prefix)
+
+    prefix_lengths = sorted({len(key) for key in _MODEL_PREFIXES}, reverse=True)
+    for length in prefix_lengths:
+        prefix = digits[:length]
+        model = _MODEL_PREFIXES.get(prefix)
+        if model:
+            return model
+    return None
 
 
 def _model_from_device_name(name: Optional[str]) -> Optional[str]:

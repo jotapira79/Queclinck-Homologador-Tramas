@@ -5,162 +5,108 @@ encoding: "ASCII"
 delimiter: ","
 terminator: "$"
 
-# --- Configuración/Features para compatibilidad ---
-
 config:
-
-# Según protocolo GV30CAU, el Position Append Mask controla campos opcionales después de <Cell ID>.
-
-# Documentado explícitamente:
-
-# - bit0 => Satellites in Use
-
-# - bit1 => GNSS Trigger Type (opcional)
-
-# Otros bits: reservados/no documentados para GTFRI en este documento.
-
-position_append_mask_bits: "bit0=sats_in_use; bit1=gnss_trigger_type; otros reservados"
+  position_append_mask_bits: "bit0=sats_in_use; bit1=gnss_trigger_type; otros reservados"
 
 version_field:
-name: full_protocol_version
-length: 10
-format: hex
-example: "8020210100"
+  name: full_protocol_version
+  length: 10
+  format: hex
+  example: "8020210100"
 
 schema:
-sections:
-- name: head
-fields:
-- { name: header, const_any: ["+RESP:GTFRI", "+BUFF:GTFRI"], type: string }
-- { name: full_protocol_version, type: hex, length: 10, example: "8020210100" }
-- { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$", example: "868487004398921" }
-- { name: device_name, type: string, max_length: 20, pattern: "^[0-9A-Za-z_-]{1,20}$", example: "GV30CAU" }
+  sections:
+    - name: head
+      fields:
+        - { name: header, const_any: ["+RESP:GTFRI", "+BUFF:GTFRI"], type: string }
+        - { name: full_protocol_version, type: hex, length: 10, example: "8020210100" }
+        - { name: imei, type: string, length: 15, pattern: "^[0-9]{15}$", example: "868487004398921" }
+        - { name: device_name, type: string, max_length: 20, pattern: "^[0-9A-Za-z_-]{1,20}$", example: "GV30CAU" }
 
-```
-- name: body
-  fields:
-    - name: external_power_mv
-      type: int
-      min: 0
-      max: 99999
-      nullable: true
-      description: "External Power Voltage (mV). Puede venir vacío en algunos reportes/configuraciones."
-      # En ejemplo del protocolo, aparece vacío inmediatamente después del device_name.
-      # +RESP:GTFRI,...,GV30CAU,,10,...
+    - name: body
+      fields:
+        - name: external_power_mv
+          type: int
+          min: 0
+          max: 99999
+          nullable: true
+          description: "External Power Voltage (mV). Puede venir vacío en algunas configuraciones."
 
-    - name: report_id_report_type
-      type: string
-      length: 2
-      description: "Report ID / Report Type (X(1-5)Y(0-6))."
-      note: "Campo de 2 caracteres ASCII; el documento lo define como 'Report ID / Report Type'."
+        - name: report_id_report_type
+          type: string
+          length: 2
+          description: "Report ID / Report Type (X(1-5)Y(0-6))."
 
-    - name: number
-      type: int
-      min: 1
-      max: 15
-      description: "Número de posiciones incluidas (generalmente 1)."
+        - name: number
+          type: int
+          min: 1
+          max: 15
+          description: "Número de posiciones incluidas (generalmente 1)."
 
-    # --- Posición GNSS ---
-    - { name: gnss_accuracy_level, type: int, min: 0, max: 50, description: "GNSS Accuracy (HDOP / estado fix)." }
-    - { name: speed_kmh, type: float, min: 0.0, max: 999.9, description: "Speed (km/h)." }
-    - { name: azimuth_deg, type: int, min: 0, max: 359, description: "Azimuth (0-359)." }
-    - { name: altitude_m, type: float, nullable: true, note: "(-)xxxxx.x (m)", description: "Altitude (m)." }
-    - { name: longitude_deg, type: float, nullable: true, note: "(-)xxx.xxxxxx", description: "Longitude." }
-    - { name: latitude_deg, type: float, nullable: true, note: "(-)xx.xxxxxx", description: "Latitude." }
-    - { name: gnss_utc_time, type: datetime, format: "YYYYMMDDHHMMSS", tz: "UTC" }
+        # --- Posición GNSS ---
+        - { name: gnss_accuracy_level, type: int, min: 0, max: 50 }
+        - { name: speed_kmh, type: float, min: 0.0, max: 999.9 }
+        - { name: azimuth_deg, type: int, min: 0, max: 359 }
+        - { name: altitude_m, type: float, nullable: true }
+        - { name: longitude_deg, type: float, nullable: true }
+        - { name: latitude_deg, type: float, nullable: true }
+        - { name: gnss_utc_time, type: datetime, format: "YYYYMMDDHHMMSS", tz: "UTC" }
 
-    # --- GSM/Red ---
-    - { name: mcc, type: string, pattern: "^0[0-9]{3}$", description: "MCC (0XXX)." }
-    - { name: mnc, type: string, pattern: "^0[0-9]{3}$", description: "MNC (0XXX)." }
-    - { name: lac, type: hex, length: 4, description: "LAC (XXXX)." }
-    - { name: cell_id, type: hex, length_variant: [4, 8], description: "Cell ID (XXXX o XXXXXXXX)." }
+        # --- GSM/Red ---
+        - { name: mcc, type: string, pattern: "^0[0-9]{3}$" }
+        - { name: mnc, type: string, pattern: "^0[0-9]{3}$" }
+        - { name: lac, type: hex, length: 4 }
+        - { name: cell_id, type: hex, length_variant: [4, 8] }
 
-    # --- Position Append Mask y campos dependientes ---
-    - { name: position_append_mask, type: hex, length: 2, example: "00", description: "Position Append Mask (00-FF)." }
+        # --- Position Append Mask ---
+        - { name: position_append_mask, type: hex, length: 2, example: "00" }
+        - name: sats_in_use
+          type: int
+          min: 0
+          max: 72
+          when: { mask: position_append_mask, bit: 0 }
+        - name: gnss_trigger_type
+          type: int
+          min: 0
+          max: 4
+          optional: true
+          nullable: true
+          when: { mask: position_append_mask, bit: 1 }
 
-    - name: sats_in_use
-      type: int
-      min: 0
-      max: 72
-      when: { mask: position_append_mask, bit: 0 }
-      description: "Satellites in Use (si bit0=1)."
+        # --- Odómetro / Horómetro / AI ---
+        - { name: mileage_km, type: float, min: 0.0, max: 4294967.0 }
+        - name: hour_meter
+          type: string
+          nullable: true
+          pattern: "^[0-9]{5,7}:[0-5][0-9]:[0-5][0-9]$"
+        - name: analog_input1_mv
+          type: int
+          min: 0
+          max: 16000
+          nullable: true
+        - { name: reserved1, type: number, nullable: true }
+        - { name: reserved2, type: number, nullable: true }
+        - { name: backup_batt_pct, type: int, min: 0, max: 100, nullable: true }
+        - { name: device_status, type: hex, length: 6, example: "220100" }
+        - { name: reserved3, type: number, nullable: true }
+        - { name: reserved4, type: number, nullable: true }
+        - { name: reserved5, type: number, nullable: true }
+        - { name: reserved6, type: number, nullable: true, optional: true }
 
-    - name: gnss_trigger_type
-      type: int
-      min: 0
-      max: 4
-      optional: true
-      nullable: true
-      when: { mask: position_append_mask, bit: 1 }
-      description: >
-        GNSS Trigger Type (0-4) si bit1=1.
-        Nota: el documento marca este campo como 'Optional'.
-
-    # --- Odómetro / Horómetro / AI ---
-    - { name: mileage_km, type: float, min: 0.0, max: 4294967.0, description: "Mileage (km)." }
-
-    - name: hour_meter
-      type: string
-      nullable: true
-      pattern: "^[0-9]{5,7}:[0-5][0-9]:[0-5][0-9]$"
-      example: "0000102:34:33"
-      description: "Hour Meter Count (HHHHH-HHHHHHH:MM:SS). Si está deshabilitado, viene vacío."
-
-    - name: analog_input1_mv
-      type: int
-      min: 0
-      max: 16000
-      nullable: true
-      description: "Analog Input 1 (mV). Si no aplica, puede venir vacío."
-
-    # El documento lista dos 'Reserved 0' seguidos luego de Analog Input 1.
-    - { name: reserved1, type: number, nullable: true, description: "Reserved (documentado como 0 / vacío)." }
-    - { name: reserved2, type: number, nullable: true, description: "Reserved (documentado como 0 / vacío)." }
-
-    - name: backup_batt_pct
-      type: int
-      min: 0
-      max: 100
-      nullable: true
-      description: "Backup Battery Percentage (0-100)."
-
-    - name: device_status
-      type: hex
-      length: 6
-      example: "220100"
-      description: "Device Status (6 HEX). Primeros 2 bytes=motion; 2 bytes=input; 2 bytes=output."
-
-    # El documento indica un Reserved 0 antes de RAT/Band (Optional).
-    - { name: reserved3, type: number, nullable: true, description: "Reserved (documentado como 0 / vacío)." }
-    - { name: reserved4, type: number, nullable: true, description: "Reserved (documentado como 0 / vacío)." }
-    - { name: reserved5, type: number, nullable: true, description: "Reserved (documentado como 0 / vacío)." }
-
-
-- name: tail
-  fields:
-    - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS", tz: "UTC" }
-    - { name: count_number, type: hex, length: 4, description: "Count Number (0000-FFFF)." }
-    - { name: tail, const: "$", type: string, optional: true, default_if_absent: "$" }
-```
+    - name: tail
+      fields:
+        - { name: send_time, type: datetime, format: "YYYYMMDDHHMMSS", tz: "UTC" }
+        - { name: count_number, type: hex, length: 4 }
+        - { name: tail, const: "$", type: string, optional: true, default_if_absent: "$" }
 
 masks:
-position_append_mask:
-size_bits: 8
-bits:
-0: { field: sats_in_use, description: "Satellites in Use" }
-1: { field: gnss_trigger_type, description: "GNSS Trigger Type (Optional)" }
-
-notes:
-
-* "GTFRI (ASCII) se envía cuando el fixed report está habilitado. Si se habilita +RESP:GTERI, el equipo puede enviar GTERI en lugar de GTFRI."
-* "External Power Voltage puede venir vacío (se observa en el ejemplo oficial: ...GV30CAU,,10,...)."
-* "Position Append Mask controla campos opcionales después de Cell ID: bit0=satélites; bit1=GNSS Trigger Type."
-* "RAT y Band data son 'Optional' y dependen del ERI Mask del comando AT+GTFRI."
-* "GNSS UTC Time y Send Time están en UTC; convertir a hora oficial de Chile continental en la aplicación (considerando DST vigente)."
+  position_append_mask:
+    size_bits: 8
+    bits:
+      0: { field: sats_in_use, description: "Satellites in Use" }
+      1: { field: gnss_trigger_type, description: "GNSS Trigger Type (Optional)" }
 
 examples:
-raw_frames:
-# Ejemplo oficial del documento (con campos vacíos/optional):
-- "+RESP:GTFRI,8020210100,868487004398921,GV30CAU,,10,1,1,26.6,66,21.2,117.248633,31.855967,20250307020609,0460,0000,5666,05C5DF2D,00,13.3,,,,,,220100,,,,20250307020611,2800$"
-# Ejemplo sintético +BUFF (misma estructura):
-- "+BUFF:GTFRI,8020210100,868487004398921,GV30CAU,12000,10,1,5,60.0,180,50.0,117.129417,31.839262,20250307030323,0460,0001,DF5C,027A4F1F,03,12,2,12345.6,0000012:34:56,12000,0,0,80,220100,0,4,28,,20250307030325,00AF$"
+  raw_frames:
+    - "+RESP:GTFRI,8020210100,868487004398921,GV30CAU,,10,1,1,26.6,66,21.2,117.248633,31.855967,20250307020609,0460,0000,5666,05C5DF2D,00,13.3,,,,,,220100,,,,20250307020611,2800$"
+    - "+BUFF:GTFRI,8020210100,868487004398921,GV30CAU,12000,10,1,5,60.0,180,50.0,117.129417,31.839262,20250307030323,0460,0001,DF5C,027A4F1F,03,12,2,12345.6,0000012:34:56,12000,0,0,80,220100,0,4,28,,20250307030325,00AF$"
