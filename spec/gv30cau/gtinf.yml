@@ -132,26 +132,9 @@ fields:
 
     # El documento indica un Reserved 0 antes de RAT/Band (Optional).
     - { name: reserved3, type: number, nullable: true, description: "Reserved (documentado como 0 / vacío)." }
+    - { name: reserved4, type: number, nullable: true, description: "Reserved (documentado como 0 / vacío)." }
+    - { name: reserved5, type: number, nullable: true, description: "Reserved (documentado como 0 / vacío)." }
 
-    # RAT y Band data son opcionales (controlados por ERI Mask de AT+GTFRI).
-    - name: rat
-      type: int
-      min: 0
-      max: 4
-      optional: true
-      nullable: true
-      description: "RAT (0=No Service, 1=EGPRS, 4=LTE Cat1). Optional (ERI Mask)."
-
-    - name: band
-      type: int
-      min: 0
-      max: 1900
-      optional: true
-      nullable: true
-      description: "Band (p.ej. 1-5/7/8/20/28 o 850/900/1800/1900). Optional (ERI Mask)."
-
-    # En logs reales a veces aparecen más vacíos; dejamos un extra para forward-compat.
-    - { name: reserved4, type: number, nullable: true, optional: true, description: "Reserved / extensión futura." }
 
 - name: tail
   fields:
