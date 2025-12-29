@@ -2,7 +2,7 @@
 """
 queclink_gteri_parser.py
 
-Programa para procesar tramas +RESP:GTERI (y +BUFF:GTERI) de equipos Queclink (GV310LAU, GV350CEU, GV58LAU).
+Programa para procesar tramas +RESP:GTERI (y +BUFF:GTERI) de equipos Queclink (GV310LAU, GV350CEU, GV58LAU, GV30CAU).
 - Lee archivos .txt (una trama por línea), .csv o .xlsx (columna con las tramas).
 - Separa campos según los manuales ERI de cada modelo y genera una base SQLite (.db) con tablas por modelo.
 - Requiere: Python 3.9+, pandas, openpyxl (para .xlsx).
@@ -329,7 +329,7 @@ def process_file(in_path: str, out_db: str, sheet: Optional[str]=None, col: Opti
     return total, len(parsed)
 
 def cli():
-    ap = argparse.ArgumentParser(description="Procesador de tramas +RESP:GTERI de Queclink (GV310LAU, GV350CEU, GV58LAU) -> SQLite")
+    ap = argparse.ArgumentParser(description="Procesador de tramas +RESP:GTERI de Queclink (GV310LAU, GV350CEU, GV58LAU, GV30CAU) -> SQLite")
     ap.add_argument("--in", dest="in_path", required=True, help="Ruta de entrada (.txt, .csv, .xlsx)")
     ap.add_argument("--out", dest="out_db", required=True, help="Ruta de salida .db (SQLite)")
     ap.add_argument("--sheet", dest="sheet", help="Nombre/índice de hoja para .xlsx")
