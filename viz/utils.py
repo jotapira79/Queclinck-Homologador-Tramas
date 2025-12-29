@@ -49,7 +49,7 @@ OPERATOR_CANDIDATES = [
     "operador_celular",
     "network_operator",
 ]
-CSQ_CANDIDATES = ["csq", "csq_rssi", "csq_rsrp", "lte_csq"]
+CSQ_CANDIDATES = ["csq", "csq_rssi", "csq_rsrp", "csq_rssi_rsrp", "lte_csq"]
 CSQ_BER_CANDIDATES = ["csq_ber", "ber"]
 NETWORK_TYPE_CANDIDATES = ["network_type", "rat", "network"]
 
