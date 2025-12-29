@@ -14,6 +14,13 @@ python queclink_tramas.py --help
 
 El módulo `viz/mapa_recorridos.py` agrega la posibilidad de generar mapas Folium a partir de las bases `gteri_<modelo>.db`, `gtfri_<modelo>.db` y `gtinf_<modelo>.db` generadas por el homologador. Cada mapa agrupa los puntos por IMEI, permite filtrar por operador (Claro, Movistar o Entel), día y tecnología de red (2G/3G/4G), y colorea los recorridos según la calidad de señal calculada a partir de los campos CSQ/RSRP.
 
+### Modelos disponibles (GTERI/GTFRI enriquecidos con GTINF)
+
+- GV310LAU
+- GV350CEU
+- GV58LAU
+- GV30CAU
+
 ### Uso rápido
 
 ```bash
