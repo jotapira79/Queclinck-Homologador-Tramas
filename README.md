@@ -42,8 +42,8 @@ el nombre de equipo reportado en la trama:
 
 - `86858906` → **GV310LAU**
 - `86252406` → **GV350CEU**
-- `86631406` → **GV58LAU** (si el cuarto campo no indica otro modelo)
-- `86848700` → **GV37CAU** (o `device_name=GV37CAU` cuando el IMEI no viene completo)
+- `86631406` → **GV58LAU**
+- `86848700` → **GV37CAU**
 
 Si los identificadores no corresponden a un modelo soportado se omite la trama y se deja un log de
 advertencia detallando el IMEI y el `device_name` recibido.
